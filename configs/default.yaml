@@ -1,0 +1,47 @@
+# Base experiment config template.
+# This is a section skeleton, values can be tuned later.
+
+experiment:
+  name: "simclr-vit-cifar10-ter"
+  seed: 42
+
+data:
+  dataset: "cifar10"
+  data_root: "./data"
+  image_size: 32
+  num_workers: 2
+  batch_size_ssl: 128
+  batch_size_sup: 128
+
+model:
+  backbone: "vit_tiny"
+  patch_size: 4
+  embed_dim: 192
+  projection_dim: 128
+
+simclr:
+  epochs: 100
+  temperature: 0.5
+  learning_rate: 0.001
+
+linear_probe:
+  epochs: 30
+  learning_rate: 0.001
+
+finetune:
+  epochs: 50
+  learning_rate: 0.0001
+
+ttt:
+  enabled: true
+  steps: 3
+  learning_rate: 0.00001
+  adapt_scope: "norm_only"
+
+logging:
+  use_wandb: false
+  log_dir: "./logs"
+
+checkpoint:
+  dir: "./checkpoints"
+  save_best_only: true
