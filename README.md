@@ -62,7 +62,10 @@ Build and evaluate a complete pipeline based on:
 ```text
 .
 ├── configs/                # Experiment configuration templates
-├── docs/                   # Assignment PDFs and related papers
+├── docs/
+│   ├── assignment/         # TER assignment PDFs
+│   ├── notes/              # Technical notes on methods used
+│   └── papers/             # Reference papers (SimCLR, TTT, ActMAD...)
 ├── main.py                 # Entry point and pipeline overview
 └── src/
     ├── core/               # Config + pipeline orchestration
@@ -75,5 +78,13 @@ Build and evaluate a complete pipeline based on:
 ```
 
 ## Current Status
-The repository currently provides an **OOP project skeleton** with documented modules and placeholders.
-Training and evaluation logic will be implemented incrementally by stage.
+
+| Stage | Status |
+|-------|--------|
+| Data — CIFAR-10 splits, SimCLR transforms, DataLoaders | done |
+| Models — ViT backbone (timm), SimCLR model, classifier | done |
+| Config + pipeline orchestration | in progress |
+| Stage A — SimCLR pretraining (NT-Xent) | not started |
+| Stage B — Linear probe + fine-tune | not started |
+| Stage C — TTT adapter | not started |
+| Evaluation + analysis | not started |
