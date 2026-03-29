@@ -79,12 +79,14 @@ Build and evaluate a complete pipeline based on:
 
 ## Current Status
 
-| Stage | Status |
-|-------|--------|
+| Component | Status |
+|-----------|--------|
 | Data — CIFAR-10 splits, SimCLR transforms, DataLoaders | done |
-| Models — ViT backbone (timm), SimCLR model, classifier | done |
-| Config + pipeline orchestration | in progress |
-| Stage A — SimCLR pretraining (NT-Xent) | not started |
-| Stage B — Linear probe + fine-tune | not started |
+| Models — ViT backbone (timm), SimCLR model, classifiers | done |
+| Config — typed frozen dataclasses, YAML loader, section validation | done |
+| Utils — `set_seed`, `ExperimentLogger` (CSV + TensorBoard), `CheckpointManager` | done |
+| Base trainer — shared epoch loop, abstract train/validate hooks | done |
+| Stage A — SimCLR pretraining (NT-Xent loss + trainer) | not started |
+| Stage B — Linear probe + fine-tune trainers | not started |
 | Stage C — TTT adapter | not started |
-| Evaluation + analysis | not started |
+| Pipeline orchestration + evaluator | not started |
