@@ -54,6 +54,9 @@ class ExperimentLogger:
     def info(self, msg: str, *args: Any) -> None:
         self._logger.info(msg, *args)
 
+    def debug(self, msg: str, *args: Any) -> None:
+        self._logger.debug(msg, *args)
+
     def close(self) -> None:
         self._csv_file.close()
         if self._tb_writer is not None:

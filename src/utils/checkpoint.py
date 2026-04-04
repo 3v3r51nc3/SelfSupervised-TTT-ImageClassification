@@ -20,6 +20,10 @@ class CheckpointManager:
         self._save_best_only = save_best_only
         self._best_metric: float | None = None
 
+    @property
+    def directory(self) -> Path:
+        return self._dir
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------

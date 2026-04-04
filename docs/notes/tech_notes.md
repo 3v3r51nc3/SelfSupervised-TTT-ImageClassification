@@ -82,6 +82,12 @@ for classification. Two ways to do this:
 - usually gives better accuracy than linear probe
 - but requires more compute and risks forgetting the SSL representations
 
+For this TER, **fine-tuning is the main downstream objective** because the
+assignment explicitly asks for a self-supervised pretrained model that is then
+fine-tuned on an image classification task. The **linear probe remains useful**
+as a comparison baseline: it tells us how strong the SSL representations already
+are before full supervised adaptation.
+
 ---
 
 ## TTT (Test-Time Training)
@@ -104,9 +110,14 @@ LayerNorm layers (γ, β parameters) control the scale and shift of activations.
 They are sensitive to distribution shift and quick to adapt.
 Updating only them is fast and avoids destroying the learned representations.
 
+For the TER objective, TTT must be evaluated **without access to test labels**
+and compared against the same model **without TTT**. The key question is not
+just whether the model predicts well, but whether this test-time adaptation
+actually helps under distribution shift.
+
 ---
 
-## CIFAR-10
+## CIFAR-10 and CIFAR-10-C
 
 60 000 images total, 10 classes (airplane, car, bird, cat, deer,
 dog, frog, horse, ship, truck), 32×32 pixels, RGB.
@@ -116,6 +127,42 @@ Split used in this project:
 - 5 000 validation (hyperparameter tuning)
 - 10 000 test (final evaluation)
 
-Optional: CIFAR-10-C is the same test set but with 19 types of corruption
-(noise, blur, weather effects) at 5 severity levels. Used to measure
-how much TTT actually helps under distribution shift.
+CIFAR-10-C is the same test set but with 19 types of corruption
+(noise, blur, weather effects) at 5 severity levels. In this project it is not
+just a side benchmark: it is the main way to evaluate how much TTT helps under
+distribution shift, because the assignment focuses on adaptation to shifted test
+conditions.
+
+---
+
+## How to Interpret the Experiments
+
+The final experimental pipeline should answer four slightly different questions:
+
+**1. Linear Probe**
+- If we freeze the SSL encoder and train only a linear head, do the learned
+  representations already separate CIFAR-10 classes well?
+
+**2. Fine-Tune**
+- If we unfreeze the encoder and train end-to-end on labeled data, what is the
+  main downstream classification performance of the pretrained model?
+
+**3. Without TTT**
+- How much performance do we lose when the fine-tuned model is evaluated on
+  shifted data such as CIFAR-10-C without any adaptation at test time?
+
+**4. With TTT**
+- Can a few self-supervised adaptation steps at test time recover some of that
+  lost performance, especially on corrupted or shifted test inputs?
+
+In practice, this gives a clean progression:
+- linear probe = representation quality baseline
+- fine-tune = main supervised downstream result
+- no TTT = test-time baseline
+- with TTT = adaptation result
+
+This matches the TER assignment well:
+- pretrain a model in self-supervision
+- fine-tune it on classification
+- adapt it at test time without labels
+- compare with and without adaptation under distribution shift

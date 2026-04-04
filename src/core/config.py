@@ -30,6 +30,7 @@ class DataConfig:
     num_workers: int
     batch_size_ssl: int
     batch_size_sup: int
+    val_fraction: float
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,7 @@ class SimCLRConfig:
     epochs: int
     temperature: float
     learning_rate: float
+    log_every_n_steps: int
 
 
 @dataclass(frozen=True)
@@ -112,7 +114,7 @@ class ConfigLoader:
 
         cls._validate_sections(raw)
 
-        return ExperimentConfig(
+        config = ExperimentConfig(
             experiment=ExperimentMeta(**raw["experiment"]),
             data=DataConfig(**raw["data"]),
             model=ModelConfig(**raw["model"]),
@@ -123,9 +125,22 @@ class ConfigLoader:
             logging=LoggingConfig(**raw["logging"]),
             checkpoint=CheckpointConfig(**raw["checkpoint"]),
         )
+        cls._validate_values(config)
+        return config
 
     @classmethod
     def _validate_sections(cls, raw: dict[str, Any]) -> None:
         missing = [s for s in cls._REQUIRED_SECTIONS if s not in raw]
         if missing:
             raise ValueError(f"Config is missing required sections: {missing}")
+
+    @classmethod
+    def _validate_values(cls, config: ExperimentConfig) -> None:
+        if not 0.0 < config.data.val_fraction < 1.0:
+            raise ValueError("data.val_fraction must be between 0 and 1.")
+        if config.data.batch_size_ssl <= 0 or config.data.batch_size_sup <= 0:
+            raise ValueError("Batch sizes must be positive.")
+        if config.simclr.epochs <= 0:
+            raise ValueError("simclr.epochs must be positive.")
+        if config.simclr.log_every_n_steps <= 0:
+            raise ValueError("simclr.log_every_n_steps must be positive.")

@@ -14,19 +14,31 @@ PIPELINE (SimCLR + ViT + CIFAR-10 + TTT):
    - adapt on test stream with a self-supervised objective,
    - predict after K adaptation steps.
 6) Save metrics, logs, and checkpoints.
-
-This file is a skeleton only: structure and comments, no implementation yet.
 """
 
+from __future__ import annotations
+
+import argparse
+
+from src.core.config import ConfigLoader
 from src.core.pipeline import ExperimentPipeline
 
 
-def main() -> None:
-    # TODO: Initialize ExperimentPipeline from config.
-    # TODO: Run stages in order: pretrain -> probe/fine-tune -> TTT eval.
-    # TODO: Persist final metrics to artifacts/ or logs/.
-    pipeline = ExperimentPipeline()
-    pipeline.run()
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run the SimCLR Stage A training pipeline.")
+    parser.add_argument(
+        "--config",
+        default="configs/default.yaml",
+        help="Path to the experiment config YAML.",
+    )
+    return parser.parse_args()
+
+
+def main() -> dict[str, object]:
+    args = parse_args()
+    config = ConfigLoader.load(args.config)
+    pipeline = ExperimentPipeline(config=config, config_path=args.config)
+    return pipeline.run()
 
 
 if __name__ == "__main__":
