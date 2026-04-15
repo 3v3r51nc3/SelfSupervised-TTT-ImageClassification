@@ -81,6 +81,7 @@ class ExperimentPipeline:
                 variant=self.config.model.backbone,
                 patch_size=self.config.model.patch_size,
                 image_size=self.config.data.image_size,
+                embed_dim=self.config.model.embed_dim,
             ).build()
             simclr_model = SimCLRModel(
                 encoder=encoder,
