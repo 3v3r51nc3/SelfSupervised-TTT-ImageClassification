@@ -142,6 +142,37 @@ logging, and checkpoint export all work. Only increase epochs after the smoke
 test succeeds. If you do not have a local CUDA GPU, Colab is the recommended
 way to run longer experiments.
 
+## First Results
+
+The first non-smoke Stage A run was completed with:
+- dataset: CIFAR-10
+- backbone: ViT tiny
+- image size: 32
+- patch size: 4
+- projection dim: 128
+- SimCLR epochs: 20
+- optimizer: Adam with learning rate `0.001`
+
+Observed SSL loss trend:
+
+| Epoch | Train Loss | Val Loss |
+|------:|-----------:|---------:|
+| 1 | 4.82997 | 4.64490 |
+| 10 | 4.26077 | 4.17320 |
+| 20 | 4.13479 | 4.07346 |
+
+Current interpretation:
+- Stage A training is stable and improves throughout the 20 epochs.
+- The best checkpoint was the final one at epoch 20 with `val/loss = 4.07346`.
+- This is only a self-supervised pretraining signal, not a classification result yet.
+- Downstream quality still needs to be measured with a linear probe and full fine-tuning.
+
+Produced artifacts:
+- pretrained encoder: `checkpoints/simclr-vit-cifar10-ter/encoder_pretrained.pt`
+- best SimCLR checkpoint: `checkpoints/simclr-vit-cifar10-ter/simclr_best.pt`
+- run log: `logs/.../simclr-vit-cifar10-ter/experiment.log`
+- scalar history: `logs/.../simclr-vit-cifar10-ter/metrics.csv`
+
 ## Current Status
 
 | Component | Status |
@@ -151,7 +182,7 @@ way to run longer experiments.
 | Config — typed frozen dataclasses, YAML loader, section validation | done |
 | Utils — `set_seed`, `ExperimentLogger` (CSV + TensorBoard), `CheckpointManager` | done |
 | Base trainer — shared epoch loop, abstract train/validate hooks | done |
-| Stage A — SimCLR pretraining (NT-Xent loss + trainer) | implemented |
+| Stage A — SimCLR pretraining (NT-Xent loss + trainer) | implemented, first 20-epoch run completed |
 | Stage B — Linear probe + fine-tune trainers | not started |
 | Stage C — TTT adapter | not started |
 | Pipeline orchestration | implemented for Stage A |
