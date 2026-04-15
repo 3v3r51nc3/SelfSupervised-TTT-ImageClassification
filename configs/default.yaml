@@ -21,7 +21,7 @@ model:
   projection_dim: 128
 
 simclr:
-  epochs: 1
+  epochs: 20
   temperature: 0.5
   learning_rate: 0.001
   log_every_n_steps: 10
