@@ -43,7 +43,7 @@ class SimCLRTrainer(BaseTrainer):
             self.optimizer.step()
 
             running_loss += float(loss.item())
-            self._log_batch_debug(
+            self._log_batch_progress(
                 stage="train",
                 batch_idx=batch_idx,
                 total_batches=total_batches,
@@ -69,7 +69,7 @@ class SimCLRTrainer(BaseTrainer):
                     raise ValueError(f"Encountered non-finite validation loss at batch {batch_idx}.")
 
                 running_loss += float(loss.item())
-                self._log_batch_debug(
+                self._log_batch_progress(
                     stage="val",
                     batch_idx=batch_idx,
                     total_batches=total_batches,
@@ -108,7 +108,7 @@ class SimCLRTrainer(BaseTrainer):
         log_denominator = torch.logsumexp(similarity_matrix, dim=1)
         return (-positive_logits + log_denominator).mean()
 
-    def _log_batch_debug(
+    def _log_batch_progress(
         self,
         stage: str,
         batch_idx: int,
@@ -131,6 +131,14 @@ class SimCLRTrainer(BaseTrainer):
             return
 
         learning_rate = self.optimizer.param_groups[0]["lr"]
+        self.logger.info(
+            "%s batch %d/%d - loss=%.6f lr=%.8f",
+            stage,
+            batch_idx,
+            total_batches,
+            loss_value,
+            learning_rate,
+        )
         self.logger.debug(
             "%s batch %d/%d - loss=%.6f finite=%s lr=%.8f optimizer_step=%s",
             stage,

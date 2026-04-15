@@ -71,6 +71,7 @@ Build and evaluate a complete pipeline based on:
 │   ├── assignment/         # TER assignment PDFs
 │   ├── notes/              # Technical notes on methods used
 │   └── papers/             # Reference papers (SimCLR, TTT, ActMAD...)
+├── notebooks/              # Colab-ready notebook(s) for running the project
 ├── main.py                 # Entry point and pipeline overview
 └── src/
     ├── core/               # Config + pipeline orchestration
@@ -113,17 +114,28 @@ Start with a smoke test before launching a long training run.
    - encoder export: `checkpoints/simclr-vit-cifar10-ter/encoder_pretrained.pt`
 
 ### Google Colab
-1. Enable a GPU runtime.
-2. Upload or clone the repository.
-3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-4. Keep the same smoke-test setting with `simclr.epochs: 1`.
-5. Run:
-   ```bash
-   python3 main.py --config configs/default.yaml
-   ```
+Use the notebook at
+[`notebooks/run_stage_a_on_colab.ipynb`](notebooks/run_stage_a_on_colab.ipynb).
+
+1. Download that notebook from the repository.
+2. Open [Google Colab](https://colab.research.google.com/) and upload the notebook.
+3. Switch the runtime to a GPU:
+   - `Runtime -> Change runtime type -> T4 GPU` (or any available GPU)
+4. Edit the first config cell in the notebook:
+   - set `REPO_URL` to your repository URL
+   - optionally set `BRANCH`
+   - set `USE_GOOGLE_DRIVE = True` if you want logs and checkpoints persisted
+5. Run the notebook cells from top to bottom.
+
+The notebook will:
+- clone the repository into Colab
+- install `requirements.txt`
+- show the active config
+- run `python main.py --config configs/default.yaml`
+- expose logs, metrics, checkpoints, and TensorBoard
+- optionally copy artifacts to Google Drive
+
+Keep the same smoke-test setting with `simclr.epochs: 1` for the first Colab run.
 
 Use the 1-epoch smoke test to verify that config loading, dataset preparation,
 logging, and checkpoint export all work. Only increase epochs after the smoke
