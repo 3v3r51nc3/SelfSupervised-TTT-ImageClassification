@@ -124,6 +124,111 @@ class ExperimentPipeline:
             encoder_path = self.checkpoint_mgr.directory / "encoder_pretrained.pt"
             torch.save(simclr_model.encoder.state_dict(), encoder_path)
             self.logger.info("Exported pretrained encoder to %s", encoder_path)
+            
+            # -----------------------------
+            # Stage B.1 — Linear Probe
+            # -----------------------------
+            
+            self.logger.info("Starting Stage B.1: Linear Probe")
+
+            # 1) Recharger l’encoder pré-entraîné
+            encoder_lp = ViTBackboneBuilder(
+                variant=self.config.model.backbone,
+                patch_size=self.config.model.patch_size,
+                image_size=self.config.data.image_size,
+                embed_dim=self.config.model.embed_dim,
+            ).build()
+            encoder_lp.load_state_dict(torch.load(encoder_path, map_location=self.device))
+
+            # 2) Geler l’encoder
+            for p in encoder_lp.parameters():
+                p.requires_grad = False
+
+            # 3) Construire le modèle Linear Probe
+            from src.models.classifier import LinearClassifier, FineTuneModel
+            linear_head = LinearClassifier(
+                embed_dim=self.config.model.embed_dim,
+                num_classes=10,
+            )
+            lp_model = FineTuneModel(
+                encoder=encoder_lp,
+                classifier=linear_head,
+            ).to(self.device)
+
+            # 4) Optimizer
+            optimizer_lp = torch.optim.Adam(
+                lp_model.parameters(),
+                lr=self.config.linear_probe.learning_rate,
+            )
+
+            # 5) Loaders supervisés
+            sup_train_loader, sup_val_loader = data_module.supervised_loaders()
+
+            # 6) Trainer
+            from src.training.linear_probe_trainer import LinearProbeTrainer
+            lp_trainer = LinearProbeTrainer(
+                model=lp_model,
+                optimizer=optimizer_lp,
+                scheduler=None,
+                device=self.device,
+                logger=self.logger,
+                checkpoint_mgr=self.checkpoint_mgr,
+                epochs=self.config.linear_probe.epochs,
+                checkpoint_filename="linear_probe_best.pt",
+            )
+
+            # 7) Entraînement
+            lp_history = lp_trainer.fit(sup_train_loader, sup_val_loader)
+            self.logger.info("Completed Stage B.1: Linear Probe")
+            
+            # -----------------------------
+            # Stage B.2 — Full Fine-tuning
+            # -----------------------------
+            self.logger.info("Starting Stage B.2: Fine-tuning")
+
+            # 1) Recharger l’encoder pré-entraîné
+            encoder_ft = ViTBackboneBuilder(
+                variant=self.config.model.backbone,
+                patch_size=self.config.model.patch_size,
+                image_size=self.config.data.image_size,
+                embed_dim=self.config.model.embed_dim,
+            ).build()
+            encoder_ft.load_state_dict(torch.load(encoder_path, map_location=self.device))
+
+            # 2) Construire modèle complet (encoder + classifier)
+            classifier_ft = LinearClassifier(
+                embed_dim=self.config.model.embed_dim,
+                num_classes=10,
+            )
+            ft_model = FineTuneModel(
+                encoder=encoder_ft,
+                classifier=classifier_ft,
+            ).to(self.device)
+
+            # 3) Optimizer (LR plus petit)
+            optimizer_ft = torch.optim.Adam(
+                ft_model.parameters(),
+                lr=self.config.finetune.learning_rate,
+            )
+
+            # 4) Trainer
+            from src.training.finetune_trainer import FineTuneTrainer
+            ft_trainer = FineTuneTrainer(
+                model=ft_model,
+                optimizer=optimizer_ft,
+                scheduler=None,
+                device=self.device,
+                logger=self.logger,
+                checkpoint_mgr=self.checkpoint_mgr,
+                epochs=self.config.finetune.epochs,
+                checkpoint_filename="finetune_best.pt",
+            )
+
+            # 5) Entraînement
+            ft_history = ft_trainer.fit(sup_train_loader, sup_val_loader)
+            self.logger.info("Completed Stage B.2: Fine-tuning")
+
+
 
             return {
                 "history": history,
