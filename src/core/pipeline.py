@@ -18,12 +18,52 @@ from src.data.dataset import CIFARDataModule
 from src.models.backbone import ViTBackboneBuilder
 from src.models.simclr import SimCLRModel
 from src.training.simclr_trainer import SimCLRTrainer
+from src.models.classifier import LinearClassifier, FineTuneModel
+from src.training.linear_probe_trainer import LinearProbeTrainer
+from src.training.finetune_trainer import FineTuneTrainer
+from src.evaluation.evaluator import Evaluator
 from src.utils.checkpoint import CheckpointManager
 from src.utils.logger import ExperimentLogger
 from src.utils.seed import set_seed
 
 
 class ExperimentPipeline:
+    """
+    Pipeline d’orchestration de l’expérience (Stages A → B → C).
+
+    Ce module coordonne l’ensemble du workflow expérimental :
+    - préparation des données (CIFAR‑10 et CIFAR‑10‑C),
+    - construction des modèles (SimCLR, Linear Probe, Fine‑tuning),
+    - exécution séquentielle des différents stages,
+    - gestion des checkpoints et des logs,
+    - évaluation finale sur données propres et corrompues.
+
+    Le pipeline suit la structure suivante :
+
+    Stage A — Pré‑entraînement auto‑supervisé (SimCLR)
+        - Entraîne un encodeur ViT sur CIFAR‑10 via contraste NT‑Xent.
+        - Sauvegarde l’encodeur pré‑entraîné pour les stages suivants.
+
+    Stage B.1 — Linear Probe
+        - Gèle l’encodeur SSL.
+        - Entraîne uniquement un classifieur linéaire pour évaluer la qualité
+        des représentations apprises en auto‑supervisé.
+
+    Stage B.2 — Fine‑tuning complet
+        - Dégèle l’encodeur.
+        - Entraîne l’ensemble du modèle (encoder + classifier) en supervision
+        pour obtenir les meilleures performances sur CIFAR‑10.
+
+    Stage C — Évaluation sur CIFAR‑10‑C
+        - Mesure la robustesse du modèle fine‑tuned face aux corruptions
+        (bruit, blur, weather, digital) et aux 5 niveaux de sévérité.
+        - Utilise l’Evaluator générique pour calculer loss et accuracy.
+
+    Ce pipeline centralise la logique d’exécution, garantit l’ordre correct
+    des stages, et assure la persistance des artefacts (checkpoints, logs,
+    résultats d’évaluation).
+    """
+
     def __init__(self, config: ExperimentConfig, config_path: str | None = None) -> None:
         self.config = config
         self.config_path = config_path or "<in-memory>"
@@ -144,8 +184,7 @@ class ExperimentPipeline:
             for p in encoder_lp.parameters():
                 p.requires_grad = False
 
-            # 3) Construire le modèle Linear Probe
-            from src.models.classifier import LinearClassifier, FineTuneModel
+            # 3) modèle Linear Probe
             linear_head = LinearClassifier(
                 embed_dim=self.config.model.embed_dim,
                 num_classes=10,
@@ -165,7 +204,6 @@ class ExperimentPipeline:
             sup_train_loader, sup_val_loader = data_module.supervised_loaders()
 
             # 6) Trainer
-            from src.training.linear_probe_trainer import LinearProbeTrainer
             lp_trainer = LinearProbeTrainer(
                 model=lp_model,
                 optimizer=optimizer_lp,
@@ -186,7 +224,7 @@ class ExperimentPipeline:
             # -----------------------------
             self.logger.info("Starting Stage B.2: Fine-tuning")
 
-            # 1) Recharger l’encoder pré-entraîné
+            # 1) l’encoder pré-entraîné
             encoder_ft = ViTBackboneBuilder(
                 variant=self.config.model.backbone,
                 patch_size=self.config.model.patch_size,
@@ -195,7 +233,7 @@ class ExperimentPipeline:
             ).build()
             encoder_ft.load_state_dict(torch.load(encoder_path, map_location=self.device))
 
-            # 2) Construire modèle complet (encoder + classifier)
+            # 2) modèle complet (encoder + classifier)
             classifier_ft = LinearClassifier(
                 embed_dim=self.config.model.embed_dim,
                 num_classes=10,
@@ -212,7 +250,6 @@ class ExperimentPipeline:
             )
 
             # 4) Trainer
-            from src.training.finetune_trainer import FineTuneTrainer
             ft_trainer = FineTuneTrainer(
                 model=ft_model,
                 optimizer=optimizer_ft,
@@ -227,15 +264,42 @@ class ExperimentPipeline:
             # 5) Entraînement
             ft_history = ft_trainer.fit(sup_train_loader, sup_val_loader)
             self.logger.info("Completed Stage B.2: Fine-tuning")
+            
+            # -----------------------------
+            # Stage C — CIFAR-10-C Evaluation
+            # -----------------------------
+            self.logger.info("Starting Stage C: CIFAR-10-C evaluation")
+            
+            evaluator = Evaluator(
+                model=ft_model,   # modèle fine-tuned
+                device=self.device,
+                logger=self.logger,
+            )
 
+            corruptions = CIFARDataModule.cifar10c_corruptions()
+            cifar10c_results = {}
+
+            for corruption in corruptions:
+                cifar10c_results[corruption] = {}
+                for severity in range(1, 6):
+                    loader = data_module.cifar10c_loader(corruption, severity)
+                    metrics = evaluator.evaluate(loader)
+                    cifar10c_results[corruption][severity] = metrics
+
+                    self.logger.info(
+                        "CIFAR-10-C %s severity %d — acc=%.4f loss=%.4f",
+                        corruption, severity, metrics["accuracy"], metrics["loss"]
+                    )
+
+            self.logger.info("Completed Stage C: CIFAR-10-C evaluation")
 
 
             return {
-                "history": history,
-                "artifacts": {
-                    "simclr_checkpoint": str(self.checkpoint_mgr.directory / "simclr_best.pt"),
-                    "encoder_checkpoint": str(encoder_path),
-                },
-            }
+                    "history": history,
+                    "artifacts": {
+                        "simclr_checkpoint": str(self.checkpoint_mgr.directory / "simclr_best.pt"),
+                        "encoder_checkpoint": str(encoder_path),
+                    },
+                }
         finally:
             self.logger.close()

@@ -10,9 +10,12 @@ Expected responsibilities:
 import torch
 from torch.utils.data import DataLoader, Subset
 from torchvision.datasets import CIFAR10
-
 from src.data.transforms import TransformFactory
 
+import numpy as np
+from torch.utils.data import Dataset
+from PIL import Image
+from pathlib import Path
 
 class CIFARDataModule:
 
@@ -118,6 +121,38 @@ class CIFARDataModule:
             num_workers=self.num_workers,
             pin_memory=True,
         )
+        
+    def cifar10c_loader(self, corruption: str, severity: int):
+        """
+        Load a specific corruption and severity from CIFAR-10-C.
+        Each corruption file contains 50k images:
+        severity 1 = images[0:10000]
+        severity 2 = images[10000:20000]
+        severity 5 = images[40000:50000]
+        """
+
+        path = Path(self.data_root) / "CIFAR-10-C"
+
+        images = np.load(path / f"{corruption}.npy")
+        labels = np.load(path / "labels.npy")
+
+        start = (severity - 1) * 10000
+        end = severity * 10000
+
+        images = images[start:end]
+        labels = labels[start:end]
+
+        dataset = CIFAR10CDataset(images, labels, transform=self.eval_tf)
+
+        loader = DataLoader(
+            dataset,
+            batch_size=self.batch_size_sup,
+            shuffle=False,
+            num_workers=self.num_workers,
+            pin_memory=True,
+        )
+        return loader
+
 
     def split_sizes(self) -> dict[str, int]:
         return {
@@ -127,3 +162,32 @@ class CIFARDataModule:
             "supervised_val": len(self.val_dataset),
             "test": len(self.test_dataset),
         }
+        
+    @staticmethod
+    def cifar10c_corruptions():
+        return [
+            "gaussian_noise", "shot_noise", "impulse_noise",
+            "defocus_blur", "glass_blur", "motion_blur",
+            "snow", "frost", "fog", "brightness",
+            "contrast", "elastic_transform", "pixelate", "jpeg_compression",
+        ]
+
+
+
+class CIFAR10CDataset(Dataset):
+    """
+    Dataset wrapper for CIFAR-10-C.
+    Each corruption file contains 50k images (5 severities × 10k images).
+    """
+    def __init__(self, images: np.ndarray, labels: np.ndarray, transform):
+        self.images = images
+        self.labels = labels
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.images)
+
+    def __getitem__(self, idx):
+        img = Image.fromarray(self.images[idx])
+        img = self.transform(img)
+        return img, self.labels[idx]
