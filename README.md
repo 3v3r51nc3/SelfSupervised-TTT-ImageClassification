@@ -184,6 +184,6 @@ Produced artifacts:
 | Base trainer — shared epoch loop, abstract train/validate hooks | done |
 | Stage A — SimCLR pretraining (NT-Xent loss + trainer) | implemented, first 20-epoch run completed |
 | Stage B — Linear probe + fine-tune trainers | done |
-| Stage C — TTT adapter | not started |
+| Stage C — TTT adapter | done |
 | Pipeline orchestration | implemented for Stage A |
-| Evaluator / CIFAR-10-C integration | not started |
+| Evaluator / CIFAR-10-C integration | done |
