@@ -183,7 +183,7 @@ Produced artifacts:
 | Utils — `set_seed`, `ExperimentLogger` (CSV + TensorBoard), `CheckpointManager` | done |
 | Base trainer — shared epoch loop, abstract train/validate hooks | done |
 | Stage A — SimCLR pretraining (NT-Xent loss + trainer) | implemented, first 20-epoch run completed |
-| Stage B — Linear probe + fine-tune trainers | not started |
+| Stage B — Linear probe + fine-tune trainers | done |
 | Stage C — TTT adapter | not started |
 | Pipeline orchestration | implemented for Stage A |
 | Evaluator / CIFAR-10-C integration | not started |
