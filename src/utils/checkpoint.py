@@ -24,6 +24,10 @@ class CheckpointManager:
     def directory(self) -> Path:
         return self._dir
 
+    def reset_best(self) -> None:
+        """Forget the best metric — call between stages so trackers don't leak."""
+        self._best_metric = None
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
