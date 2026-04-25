@@ -69,6 +69,7 @@ class ExperimentLogger:
     def _build_logger(self, name: str) -> logging.Logger:
         logger = logging.getLogger(name)
         logger.setLevel(logging.DEBUG)
+        logger.propagate = False  # avoid duplicate lines via root logger (Colab installs one)
         if logger.handlers:
             return logger  # already configured (e.g. called twice)
 
