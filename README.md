@@ -54,8 +54,16 @@ Build and evaluate a complete pipeline based on:
 - Evaluate the same model on CIFAR-10-C to measure the effect of distribution shift
 
 6. **Stage D: Test-Time Training**
-- Adapt selected model parameters on clean and corrupted test batches without labels
-- Evaluate predictions after a small number of adaptation steps
+- Implement a TTT adapter on top of the fine-tuned model from Stage B.2
+- Adapt selected parameters online on each test batch using a self-supervised
+  objective (no test labels). Adaptation scope is configurable (e.g.
+  `norm_only` to update only LayerNorm parameters)
+- Run K adaptation steps per batch (configurable via `ttt.steps`) and predict
+  with the adapted weights
+- Re-evaluate on clean CIFAR-10 and on CIFAR-10-C across all corruptions and
+  severities, reusing the Stage C evaluator with `evaluate_with_ttt`
+- Compare with-TTT vs without-TTT accuracy and report the delta per
+  corruption/severity
 
 7. **Evaluation and Analysis**
 - Top-1 accuracy on clean test set
@@ -114,33 +122,38 @@ Start with a smoke test before launching a long training run.
    - encoder export: `checkpoints/simclr-vit-cifar10-ter/encoder_pretrained.pt`
 
 ### Google Colab
-Use the notebook at
-[`notebooks/run_stage_a_on_colab.ipynb`](notebooks/run_stage_a_on_colab.ipynb).
+A single evergreen notebook drives every stage:
+[`notebooks/colab.ipynb`](notebooks/colab.ipynb).
 
-1. Download that notebook from the repository.
-2. Open [Google Colab](https://colab.research.google.com/) and upload the notebook.
-3. Switch the runtime to a GPU:
-   - `Runtime -> Change runtime type -> T4 GPU` (or any available GPU)
-4. Edit the first config cell in the notebook:
-   - set `REPO_URL` to your repository URL
-   - optionally set `BRANCH`
-   - set `USE_GOOGLE_DRIVE = True` if you want logs and checkpoints persisted
-5. Run the notebook cells from top to bottom.
+1. Download `notebooks/colab.ipynb` and upload it to
+   [Google Colab](https://colab.research.google.com/).
+2. Switch the runtime to a GPU:
+   - `Runtime -> Change runtime type -> T4 GPU` (or any available GPU).
+3. Edit the **Configuration** cell:
+   - set `REPO_URL` and `BRANCH`,
+   - leave `USE_GOOGLE_DRIVE = True` to persist logs and checkpoints,
+   - flip the `RUN_STAGE_A`, `RUN_STAGE_B1`, `RUN_STAGE_B2`, `RUN_STAGE_C`
+     booleans to choose which stages run.
+4. Run the notebook cells from top to bottom.
 
 The notebook will:
-- clone the repository into Colab
-- install `requirements.txt`
-- show the active config
-- run `python main.py --config configs/default.yaml`
-- expose logs, metrics, checkpoints, and TensorBoard
-- optionally copy artifacts to Google Drive
+- clone the repository into Colab and install `requirements.txt`,
+- restore prior `logs/` and `checkpoints/` from Google Drive (so a skipped
+  upstream stage can reuse the artifact it produced last time),
+- download CIFAR-10-C automatically when Stage C is enabled,
+- run only the selected stages via `ExperimentPipeline.run_stage_*`,
+- expose logs, metrics, a CIFAR-10-C summary table, and TensorBoard,
+- copy artifacts back to Google Drive.
 
-Keep the same smoke-test setting with `simclr.epochs: 1` for the first Colab run.
+Stage dependencies (when a stage is skipped, the upstream artifact must
+already be on disk - the restore-from-Drive step handles this):
+- Stage B.1 / B.2 require Stage A's `encoder_pretrained.pt`.
+- Stage C requires Stage B.2's `finetune_best.pt`.
 
-Use the 1-epoch smoke test to verify that config loading, dataset preparation,
-logging, and checkpoint export all work. Only increase epochs after the smoke
-test succeeds. If you do not have a local CUDA GPU, Colab is the recommended
-way to run longer experiments.
+For a first run, set every `epochs` field in `configs/default.yaml` to 1 to
+verify config loading, data preparation, logging, and checkpoint export.
+Only increase epochs after the smoke test succeeds. If you do not have a
+local CUDA GPU, Colab is the recommended way to run longer experiments.
 
 ## First Results
 
@@ -183,7 +196,9 @@ Produced artifacts:
 | Utils — `set_seed`, `ExperimentLogger` (CSV + TensorBoard), `CheckpointManager` | done |
 | Base trainer — shared epoch loop, abstract train/validate hooks | done |
 | Stage A — SimCLR pretraining (NT-Xent loss + trainer) | implemented, first 20-epoch run completed |
-| Stage B — Linear probe + fine-tune trainers | done |
-| Stage C — TTT adapter | done |
-| Pipeline orchestration | implemented for Stage A |
-| Evaluator / CIFAR-10-C integration | done |
+| Stage B.1 — Linear probe trainer | done |
+| Stage B.2 — Fine-tune trainer | done |
+| Stage C — CIFAR-10-C evaluation across corruptions/severities | done |
+| Stage D — Test-time training adapter | not started (only stub in `src/ttt/adapter.py`) |
+| Pipeline orchestration | done for A → B.1 → B.2 → C; Stage D pending |
+| Evaluator (clean + with-TTT interface) | done; `evaluate_with_ttt` waits on Stage D adapter |

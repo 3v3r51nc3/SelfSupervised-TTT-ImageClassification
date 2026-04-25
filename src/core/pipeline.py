@@ -52,6 +52,49 @@ class ExperimentPipeline:
             save_best_only=self.config.checkpoint.save_best_only,
         )
 
+    def setup_data(self) -> CIFARDataModule:
+        """Build, prepare and set up the CIFAR-10 data module."""
+        set_seed(self.config.experiment.seed)
+
+        data_module = CIFARDataModule(
+            data_root=self.config.data.data_root,
+            image_size=self.config.data.image_size,
+            batch_size_ssl=self.config.data.batch_size_ssl,
+            batch_size_sup=self.config.data.batch_size_sup,
+            num_workers=self.config.data.num_workers,
+            val_fraction=self.config.data.val_fraction,
+            seed=self.config.experiment.seed,
+        )
+        self.logger.info("Preparing dataset '%s' from %s", self.config.data.dataset, self.config.data.data_root)
+        data_module.prepare_data()
+        data_module.setup()
+        split_sizes = data_module.split_sizes()
+        self.logger.info(
+            "Data splits prepared - ssl_train=%d ssl_val=%d supervised_train=%d supervised_val=%d test=%d",
+            split_sizes["ssl_train"],
+            split_sizes["ssl_val"],
+            split_sizes["supervised_train"],
+            split_sizes["supervised_val"],
+            split_sizes["test"],
+        )
+        return data_module
+
+    def load_finetuned_model(self, checkpoint_filename: str = "finetune_best.pt") -> FineTuneModel:
+        """Rebuild a FineTuneModel and load weights from a saved fine-tune checkpoint."""
+        encoder = self._build_encoder()
+        ft_model = FineTuneModel(
+            encoder=encoder,
+            embed_dim=self.config.model.embed_dim,
+            num_classes=CIFAR10_NUM_CLASSES,
+        ).to(self.device)
+        best_epoch = self.checkpoint_mgr.load_model(
+            ft_model,
+            filename=checkpoint_filename,
+            map_location=self.device,
+        )
+        self.logger.info("Reloaded fine-tune checkpoint '%s' from epoch %d", checkpoint_filename, best_epoch)
+        return ft_model
+
     def run(self) -> dict[str, object]:
         try:
             self.logger.info("Loaded config from %s", self.config_path)
@@ -59,29 +102,7 @@ class ExperimentPipeline:
             self.logger.info("Using seed: %d", self.config.experiment.seed)
             self.logger.info("Selected device: %s", self.device)
 
-            set_seed(self.config.experiment.seed)
-
-            data_module = CIFARDataModule(
-                data_root=self.config.data.data_root,
-                image_size=self.config.data.image_size,
-                batch_size_ssl=self.config.data.batch_size_ssl,
-                batch_size_sup=self.config.data.batch_size_sup,
-                num_workers=self.config.data.num_workers,
-                val_fraction=self.config.data.val_fraction,
-                seed=self.config.experiment.seed,
-            )
-            self.logger.info("Preparing dataset '%s' from %s", self.config.data.dataset, self.config.data.data_root)
-            data_module.prepare_data()
-            data_module.setup()
-            split_sizes = data_module.split_sizes()
-            self.logger.info(
-                "Data splits prepared - ssl_train=%d ssl_val=%d supervised_train=%d supervised_val=%d test=%d",
-                split_sizes["ssl_train"],
-                split_sizes["ssl_val"],
-                split_sizes["supervised_train"],
-                split_sizes["supervised_val"],
-                split_sizes["test"],
-            )
+            data_module = self.setup_data()
 
             ssl_train_loader, ssl_val_loader = data_module.ssl_loaders()
             self.logger.debug(
@@ -92,19 +113,19 @@ class ExperimentPipeline:
             )
 
             # Stage A - SimCLR pretraining
-            encoder_path = self._run_stage_a(ssl_train_loader, ssl_val_loader)
+            encoder_path = self.run_stage_a(ssl_train_loader, ssl_val_loader)
 
             # Supervised loaders are shared between Stage B.1 and Stage B.2.
             sup_train_loader, sup_val_loader = data_module.supervised_loaders()
 
             # Stage B.1 - Linear probe
-            lp_history = self._run_stage_b1(encoder_path, sup_train_loader, sup_val_loader)
+            lp_history = self.run_stage_b1(encoder_path, sup_train_loader, sup_val_loader)
 
             # Stage B.2 - Full fine-tuning
-            ft_model, ft_history = self._run_stage_b2(encoder_path, sup_train_loader, sup_val_loader)
+            ft_model, ft_history = self.run_stage_b2(encoder_path, sup_train_loader, sup_val_loader)
 
             # Stage C - CIFAR-10-C evaluation on the fine-tuned model
-            cifar10c_results = self._run_stage_c(ft_model, data_module)
+            cifar10c_results = self.run_stage_c(ft_model, data_module)
 
             return {
                 "history": {
@@ -126,7 +147,7 @@ class ExperimentPipeline:
     # Stage A
     # ------------------------------------------------------------------
 
-    def _run_stage_a(self, train_loader, val_loader) -> Path:
+    def run_stage_a(self, train_loader, val_loader) -> Path:
         encoder = self._build_encoder()
         simclr_model = SimCLRModel(
             encoder=encoder,
@@ -175,7 +196,7 @@ class ExperimentPipeline:
     # Stage B.1
     # ------------------------------------------------------------------
 
-    def _run_stage_b1(self, encoder_path: Path, train_loader, val_loader) -> dict[str, list[float]]:
+    def run_stage_b1(self, encoder_path: Path, train_loader, val_loader) -> dict[str, list[float]]:
         self.logger.info("Starting Stage B.1: Linear Probe")
 
         encoder = self._build_encoder()
@@ -212,7 +233,7 @@ class ExperimentPipeline:
     # Stage B.2
     # ------------------------------------------------------------------
 
-    def _run_stage_b2(
+    def run_stage_b2(
         self, encoder_path: Path, train_loader, val_loader
     ) -> tuple[FineTuneModel, dict[str, list[float]]]:
         self.logger.info("Starting Stage B.2: Fine-tuning")
@@ -249,7 +270,7 @@ class ExperimentPipeline:
     # Stage C
     # ------------------------------------------------------------------
 
-    def _run_stage_c(
+    def run_stage_c(
         self, model: FineTuneModel, data_module: CIFARDataModule
     ) -> dict[str, dict[int, dict[str, float]]]:
         self.logger.info("Starting Stage C: CIFAR-10-C evaluation")
