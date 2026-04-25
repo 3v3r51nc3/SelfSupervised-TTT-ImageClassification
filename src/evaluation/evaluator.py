@@ -15,7 +15,8 @@ from torch.utils.data import DataLoader
 
 
 class TTTAdapter(Protocol):
-    def adapt_step(self, images: torch.Tensor) -> None: ...
+    def adapt_and_predict(self, images: torch.Tensor) -> torch.Tensor: ...
+    def reset(self) -> None: ...
 
 
 class Evaluator:
@@ -33,8 +34,8 @@ class Evaluator:
 
         with torch.no_grad():
             for images, targets in loader:
-                images = images.to(self.device)
-                targets = targets.to(self.device)
+                images = images.to(self.device, non_blocking=True)
+                targets = targets.to(self.device, non_blocking=True)
 
                 logits = self.model(images)
                 loss = self.criterion(logits, targets)
@@ -50,21 +51,26 @@ class Evaluator:
         }
 
     def evaluate_with_ttt(self, loader: DataLoader, ttt_adapter: TTTAdapter) -> dict[str, float]:
-        """Evaluate the model with Test-Time Training (Stage D)."""
-        self.model.eval()
+        """Evaluate the model with TTT — adapt then predict per batch."""
+        ttt_adapter.reset()
+
+        total_loss = 0.0
         total_correct = 0
         total_samples = 0
 
         for images, targets in loader:
-            images = images.to(self.device)
-            targets = targets.to(self.device)
+            images = images.to(self.device, non_blocking=True)
+            targets = targets.to(self.device, non_blocking=True)
 
-            ttt_adapter.adapt_step(images)
+            logits = ttt_adapter.adapt_and_predict(images)
+            loss = self.criterion(logits, targets)
 
-            with torch.no_grad():
-                logits = self.model(images)
-
+            batch_size = images.size(0)
+            total_loss += loss.item() * batch_size
             total_correct += (logits.argmax(dim=1) == targets).sum().item()
-            total_samples += images.size(0)
+            total_samples += batch_size
 
-        return {"accuracy": total_correct / total_samples}
+        return {
+            "loss": total_loss / total_samples,
+            "accuracy": total_correct / total_samples,
+        }
