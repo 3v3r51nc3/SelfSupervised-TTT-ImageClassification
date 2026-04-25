@@ -9,9 +9,9 @@ data:
   dataset: "cifar10"
   data_root: "./data"
   image_size: 32
-  num_workers: 2
-  batch_size_ssl: 128
-  batch_size_sup: 128
+  num_workers: 4
+  batch_size_ssl: 512
+  batch_size_sup: 256
   val_fraction: 0.1
 
 model:
@@ -23,7 +23,7 @@ model:
 simclr:
   epochs: 20
   temperature: 0.5
-  learning_rate: 0.001
+  learning_rate: 0.002
   log_every_n_steps: 10
 
 linear_probe:
