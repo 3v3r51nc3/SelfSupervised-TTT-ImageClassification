@@ -9,7 +9,7 @@ Module goals:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +31,9 @@ class DataConfig:
     batch_size_ssl: int
     batch_size_sup: int
     val_fraction: float
+    augment_supervised: bool = True
+    randaugment_n: int = 2
+    randaugment_m: int = 9
 
 
 @dataclass(frozen=True)
@@ -39,6 +42,7 @@ class ModelConfig:
     patch_size: int
     embed_dim: int
     projection_dim: int
+    drop_path_rate: float = 0.1
 
 
 @dataclass(frozen=True)
@@ -47,18 +51,29 @@ class SimCLRConfig:
     temperature: float
     learning_rate: float
     log_every_n_steps: int
+    weight_decay: float = 1.0e-4
+    warmup_epochs: int = 10
+    use_amp: bool = True
 
 
 @dataclass(frozen=True)
 class LinearProbeConfig:
     epochs: int
     learning_rate: float
+    weight_decay: float = 0.0
+    warmup_epochs: int = 0
+    use_amp: bool = True
 
 
 @dataclass(frozen=True)
 class FineTuneConfig:
     epochs: int
     learning_rate: float
+    weight_decay: float = 0.05
+    warmup_epochs: int = 3
+    label_smoothing: float = 0.1
+    use_amp: bool = True
+    early_stopping_patience: int = 10
 
 
 @dataclass(frozen=True)
@@ -67,6 +82,7 @@ class TTTConfig:
     steps: int
     learning_rate: float
     adapt_scope: str
+    method: str = "tent"
 
 
 @dataclass(frozen=True)
@@ -144,3 +160,11 @@ class ConfigLoader:
             raise ValueError("simclr.epochs must be positive.")
         if config.simclr.log_every_n_steps <= 0:
             raise ValueError("simclr.log_every_n_steps must be positive.")
+        if config.simclr.warmup_epochs < 0 or config.simclr.warmup_epochs >= config.simclr.epochs:
+            raise ValueError("simclr.warmup_epochs must be in [0, simclr.epochs).")
+        if config.finetune.warmup_epochs < 0 or config.finetune.warmup_epochs >= config.finetune.epochs:
+            raise ValueError("finetune.warmup_epochs must be in [0, finetune.epochs).")
+        if config.ttt.enabled and config.ttt.adapt_scope not in {"norm_only", "all"}:
+            raise ValueError("ttt.adapt_scope must be 'norm_only' or 'all'.")
+        if config.ttt.enabled and config.ttt.method not in {"tent"}:
+            raise ValueError("ttt.method must be 'tent' (only supported method).")
