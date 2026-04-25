@@ -4,7 +4,9 @@ Base trainer.
 Contains shared loop structure:
 - train loop,
 - validation loop,
-- checkpoint/log hooks.
+- AMP (mixed precision),
+- per-epoch scheduler step,
+- best-checkpoint + early stopping.
 """
 
 from __future__ import annotations
@@ -33,6 +35,9 @@ class BaseTrainer(ABC):
         checkpoint_mgr: CheckpointManager,
         epochs: int,
         checkpoint_filename: str = "best.pt",
+        use_amp: bool = False,
+        early_stopping_patience: int | None = None,
+        grad_clip: float | None = 1.0,
     ) -> None:
         self.model = model.to(device)
         self.optimizer = optimizer
@@ -42,6 +47,10 @@ class BaseTrainer(ABC):
         self.checkpoint_mgr = checkpoint_mgr
         self.epochs = epochs
         self.checkpoint_filename = checkpoint_filename
+        self.use_amp = use_amp and device.type == "cuda"
+        self.scaler = torch.amp.GradScaler("cuda", enabled=self.use_amp)
+        self.early_stopping_patience = early_stopping_patience
+        self.grad_clip = grad_clip
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -54,6 +63,7 @@ class BaseTrainer(ABC):
     ) -> dict[str, list[float]]:
         """Run the full training loop and return metric history."""
         history: dict[str, list[float]] = {}
+        epochs_since_improvement = 0
 
         for epoch in range(1, self.epochs + 1):
             self.logger.info("Epoch %d/%d started", epoch, self.epochs)
@@ -91,6 +101,7 @@ class BaseTrainer(ABC):
                     epoch,
                     primary_metric,
                 )
+                epochs_since_improvement = 0
             else:
                 self.logger.debug(
                     "Skipped checkpoint update for '%s' at epoch %d (metric=%.6f)",
@@ -98,9 +109,21 @@ class BaseTrainer(ABC):
                     epoch,
                     primary_metric,
                 )
+                epochs_since_improvement += 1
 
             if self.scheduler is not None:
                 self.scheduler.step()
+
+            if (
+                self.early_stopping_patience is not None
+                and epochs_since_improvement >= self.early_stopping_patience
+            ):
+                self.logger.info(
+                    "Early stopping triggered after %d epochs without improvement (epoch %d).",
+                    self.early_stopping_patience,
+                    epoch,
+                )
+                break
 
         return history
 
@@ -120,10 +143,22 @@ class BaseTrainer(ABC):
     # Shared helpers
     # ------------------------------------------------------------------
 
+    def _backward_step(self, loss: torch.Tensor) -> None:
+        """Common AMP-aware backward + optimizer step."""
+        self.scaler.scale(loss).backward()
+        if self.grad_clip is not None:
+            self.scaler.unscale_(self.optimizer)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
+        self.scaler.step(self.optimizer)
+        self.scaler.update()
+
+    def _autocast(self):
+        return torch.amp.autocast("cuda", enabled=self.use_amp)
+
     def _to_device(self, batch: Any) -> Any:
         """Recursively move tensors in *batch* to self.device."""
         if isinstance(batch, torch.Tensor):
-            return batch.to(self.device)
+            return batch.to(self.device, non_blocking=True)
         if isinstance(batch, (list, tuple)):
             moved = [self._to_device(item) for item in batch]
             return type(batch)(moved)
