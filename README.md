@@ -49,23 +49,18 @@ Build and evaluate a complete pipeline based on:
 - Linear probe with frozen encoder as a comparison baseline
 - Full supervised fine-tuning with unfrozen encoder as the main downstream stage
 
-5. **Stage C: Evaluation Without TTT**
-- Evaluate the trained classifier on clean CIFAR-10 test data
-- Evaluate the same model on CIFAR-10-C to measure the effect of distribution shift
+5. **Stage C: Robustness + TTT Evaluation (combined)**
+- Evaluate the fine-tuned classifier on clean CIFAR-10 and on CIFAR-10-C
+  across all 19 corruptions × 5 severities.
+- For each (corruption, severity) compute both the **baseline** (no
+  adaptation) and **TTT** (TENT, entropy minimization on LayerNorm
+  affine parameters only) accuracy and loss in the same pass.
+- The adapter is built once and reset between (corruption, severity)
+  sets so adaptation never bleeds across them.
+- Output: `logs/<exp>/cifar10c_results.csv` with per-row baseline /
+  TTT / delta accuracy.
 
-6. **Stage D: Test-Time Training**
-- Implement a TTT adapter on top of the fine-tuned model from Stage B.2
-- Adapt selected parameters online on each test batch using a self-supervised
-  objective (no test labels). Adaptation scope is configurable (e.g.
-  `norm_only` to update only LayerNorm parameters)
-- Run K adaptation steps per batch (configurable via `ttt.steps`) and predict
-  with the adapted weights
-- Re-evaluate on clean CIFAR-10 and on CIFAR-10-C across all corruptions and
-  severities, reusing the Stage C evaluator with `evaluate_with_ttt`
-- Compare with-TTT vs without-TTT accuracy and report the delta per
-  corruption/severity
-
-7. **Evaluation and Analysis**
+6. **Evaluation and Analysis**
 - Top-1 accuracy on clean test set
 - Accuracy under corruption / distribution shift
 - Delta between without-TTT and with-TTT settings, especially on CIFAR-10-C
@@ -93,12 +88,37 @@ Build and evaluate a complete pipeline based on:
 
 ## Technical Notes
 The project notes used to explain the main design choices live in
-[`docs/notes/tech_notes.md`](docs/notes/tech_notes.md). They summarize ViT,
-SimCLR, linear probe vs fine-tuning, TTT, and why CIFAR-10-C matters for
-distribution-shift evaluation.
+[`docs/notes/tech_notes.md`](docs/notes/tech_notes.md). They cover:
+
+- **Methods** — ViT, SimCLR, NT-Xent, linear probe vs fine-tune, TTT (high
+  level), CIFAR-10 / CIFAR-10-C.
+- **Training recipe glossary** — AMP, AdamW + weight decay, warmup +
+  cosine scheduler factory.
+- **TENT (the actual TTT method)** — entropy minimization on LayerNorm
+  affine params, snapshot/reset semantics across (corruption, severity).
+- **Augmentation pipelines** — SimCLR vs supervised-train vs eval (table).
+- **Stage orchestration & artifact flow** — how A → B.1 → B.2 → C feed
+  each other.
+- **Stage C CSV schema** — column-by-column breakdown of
+  `cifar10c_results.csv`.
+- **Regularization & stability knobs** — label smoothing, early stopping,
+  gradient clipping under AMP, drop_path.
+- **Config presets & notebook switch** — smoke vs default.
+- **References** — full citation list (papers + arXiv links) for every
+  technique used.
 
 ## First Run
-Start with a smoke test before launching a long training run.
+Two configs are shipped:
+
+- **`configs/smoke.yaml`** — 2 epochs per stage, ~5 min on a GPU. Use it
+  to verify that the full A → B.1 → B.2 → C pipeline runs end-to-end and
+  that `cifar10c_results.csv` is written.
+- **`configs/default.yaml`** — overnight-grade run (SimCLR 200 ep,
+  fine-tune 30 ep, linear probe 30 ep, full Stage C eval) with AMP,
+  AdamW, warmup + cosine, RandAugment, label smoothing, drop_path,
+  early stopping, and TENT-style TTT enabled.
+
+Always run smoke first, then switch to default for the real run.
 
 ### Local
 1. Create and activate a virtual environment:
@@ -110,16 +130,22 @@ Start with a smoke test before launching a long training run.
    ```bash
    pip install -r requirements.txt
    ```
-3. Edit `configs/default.yaml` and set `simclr.epochs: 1` for the first run.
-4. Launch Stage A:
+3. Smoke test:
+   ```bash
+   python3 main.py --config configs/smoke.yaml
+   ```
+4. Overnight run (only after smoke succeeds):
    ```bash
    python3 main.py --config configs/default.yaml
    ```
-5. Check outputs:
-   - logs: `logs/simclr-vit-cifar10-ter/experiment.log`
-   - metrics: `logs/simclr-vit-cifar10-ter/metrics.csv`
-   - checkpoints: `checkpoints/simclr-vit-cifar10-ter/simclr_best.pt`
-   - encoder export: `checkpoints/simclr-vit-cifar10-ter/encoder_pretrained.pt`
+5. Check outputs (replace `<exp>` with `experiment.name` from the YAML):
+   - logs: `logs/<exp>/experiment.log`
+   - metrics: `logs/<exp>/metrics.csv`
+   - SimCLR checkpoint: `checkpoints/<exp>/simclr_best.pt`
+   - encoder export: `checkpoints/<exp>/encoder_pretrained.pt`
+   - linear probe: `checkpoints/<exp>/linear_probe_best.pt`
+   - fine-tune: `checkpoints/<exp>/finetune_best.pt`
+   - Stage C report: `logs/<exp>/cifar10c_results.csv`
 
 ### Google Colab
 A single evergreen notebook drives every stage:
@@ -131,6 +157,11 @@ A single evergreen notebook drives every stage:
    - `Runtime -> Change runtime type -> T4 GPU` (or any available GPU).
 3. Edit the **Configuration** cell:
    - set `REPO_URL` and `BRANCH`,
+   - choose `CONFIG_PRESET = "smoke"` for a 5-minute pipeline check or
+     `"default"` for the overnight run; the `CONFIG_PATHS` dict maps the
+     preset to the YAML on disk,
+   - optionally patch individual fields via `CONFIG_OVERRIDES` without
+     editing YAML,
    - leave `USE_GOOGLE_DRIVE = True` to persist logs and checkpoints,
    - flip the `RUN_STAGE_A`, `RUN_STAGE_B1`, `RUN_STAGE_B2`, `RUN_STAGE_C`
      booleans to choose which stages run.
@@ -150,55 +181,35 @@ already be on disk - the restore-from-Drive step handles this):
 - Stage B.1 / B.2 require Stage A's `encoder_pretrained.pt`.
 - Stage C requires Stage B.2's `finetune_best.pt`.
 
-For a first run, set every `epochs` field in `configs/default.yaml` to 1 to
-verify config loading, data preparation, logging, and checkpoint export.
-Only increase epochs after the smoke test succeeds. If you do not have a
-local CUDA GPU, Colab is the recommended way to run longer experiments.
+If you do not have a local CUDA GPU, Colab is the recommended way to run
+longer experiments. The overnight `default` config targets an L4 / A100
+(roughly 2–3 h on an L4); plain T4 is workable but slower.
 
-## First Results
+## Preliminary Results (deprecated 20-epoch SSL run)
 
-The first non-smoke Stage A run was completed with:
-- dataset: CIFAR-10
-- backbone: ViT tiny
-- image size: 32
-- patch size: 4
-- projection dim: 128
-- SimCLR epochs: 20
-- optimizer: Adam with learning rate `0.001`
-
-Observed SSL loss trend:
-
-| Epoch | Train Loss | Val Loss |
-|------:|-----------:|---------:|
-| 1 | 4.82997 | 4.64490 |
-| 10 | 4.26077 | 4.17320 |
-| 20 | 4.13479 | 4.07346 |
-
-Current interpretation:
-- Stage A training is stable and improves throughout the 20 epochs.
-- The best checkpoint was the final one at epoch 20 with `val/loss = 4.07346`.
-- This is only a self-supervised pretraining signal, not a classification result yet.
-- Downstream quality still needs to be measured with a linear probe and full fine-tuning.
-
-Produced artifacts:
-- pretrained encoder: `checkpoints/simclr-vit-cifar10-ter/encoder_pretrained.pt`
-- best SimCLR checkpoint: `checkpoints/simclr-vit-cifar10-ter/simclr_best.pt`
-- run log: `logs/.../simclr-vit-cifar10-ter/experiment.log`
-- scalar history: `logs/.../simclr-vit-cifar10-ter/metrics.csv`
+An early sanity-check Stage A run with only 20 SimCLR epochs and no
+augmentation on the supervised stage exhibited classic overfitting in
+fine-tuning (val loss climbing while train accuracy reached ~94%). This
+result is no longer representative — the project has since switched to
+the full overnight recipe (200 SSL epochs, AMP, AdamW, cosine + warmup,
+RandAugment, label smoothing, early stopping, TENT-style TTT). Final
+numbers will be reported once the overnight run completes.
 
 ## Current Status
 
 | Component | Status |
 |-----------|--------|
-| Data — CIFAR-10 splits, SimCLR transforms, DataLoaders | done |
-| Models — ViT backbone (timm), SimCLR model, classifiers | done |
-| Config — typed frozen dataclasses, YAML loader, section validation | done |
-| Utils — `set_seed`, `ExperimentLogger` (CSV + TensorBoard), `CheckpointManager` | done |
-| Base trainer — shared epoch loop, abstract train/validate hooks | done |
-| Stage A — SimCLR pretraining (NT-Xent loss + trainer) | implemented, first 20-epoch run completed |
-| Stage B.1 — Linear probe trainer | done |
-| Stage B.2 — Fine-tune trainer | done |
-| Stage C — CIFAR-10-C evaluation across corruptions/severities | done |
-| Stage D — Test-time training adapter | not started (only stub in `src/ttt/adapter.py`) |
-| Pipeline orchestration | done for A → B.1 → B.2 → C; Stage D pending |
-| Evaluator (clean + with-TTT interface) | done; `evaluate_with_ttt` waits on Stage D adapter |
+| Data — CIFAR-10 splits, three transform pipelines (SimCLR / sup train / eval), DataLoaders | done |
+| Models — ViT backbone (timm) with `drop_path_rate`, SimCLR projector, classifiers | done |
+| Config — typed frozen dataclasses, YAML loader, section validation, `smoke` + `default` presets | done |
+| Utils — `set_seed`, `ExperimentLogger` (CSV + TensorBoard), `CheckpointManager` with `reset_best()` | done |
+| Base trainer — shared epoch loop, AMP (`autocast` + `GradScaler`), grad clipping, early stopping | done |
+| Stage A — SimCLR pretraining (NT-Xent + AdamW + warmup-cosine + AMP) | done |
+| Stage B.1 — Linear probe (frozen encoder, eval transforms) | done |
+| Stage B.2 — Fine-tune (label smoothing, RandAugment, drop_path, early stopping) | done |
+| Stage C — CIFAR-10-C eval over all corruptions × severities, baseline + TTT in one pass, CSV report | done |
+| TTT adapter — TENT (entropy minimization on LayerNorm affine params, snapshot/reset) | done |
+| Pipeline orchestration — A → B.1 → B.2 → C with `reset_best()` between stages | done |
+| Evaluator — `evaluate` and `evaluate_with_ttt` | done |
+| Notebook — `CONFIG_PRESET` switch, Drive caching, CIFAR-10-C auto-download | done |
+| Overnight run on L4/A100 with `configs/default.yaml` | pending |
