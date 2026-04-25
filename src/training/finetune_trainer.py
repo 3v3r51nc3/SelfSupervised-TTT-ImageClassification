@@ -1,9 +1,8 @@
 """
-Fine-tuning Trainer (Stage B.2)
+Trainer for full supervised fine-tuning (Stage B.2).
 
-Ce trainer entraîne l’encodeur + le classifieur ensemble.
-Contrairement au linear probe, l’encodeur n’est pas gelé.
-On optimise donc tous les paramètres du modèle.
+Both the encoder and the classifier are trained together (no parameter
+is frozen). Used as the main downstream stage on CIFAR-10.
 """
 
 from __future__ import annotations
@@ -13,8 +12,8 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from src.training.base_trainer import BaseTrainer
-from src.utils.logger import ExperimentLogger
 from src.utils.checkpoint import CheckpointManager
+from src.utils.logger import ExperimentLogger
 
 
 class FineTuneTrainer(BaseTrainer):
@@ -41,7 +40,7 @@ class FineTuneTrainer(BaseTrainer):
         )
         self.criterion = nn.CrossEntropyLoss()
 
-    def _train_one_epoch(self, loader: DataLoader, epoch: int):
+    def _train_one_epoch(self, loader: DataLoader) -> dict[str, float]:
         self.model.train()
         total_loss = 0.0
         total_correct = 0
@@ -51,7 +50,7 @@ class FineTuneTrainer(BaseTrainer):
             images = images.to(self.device)
             targets = targets.to(self.device)
 
-            self.optimizer.zero_grad()
+            self.optimizer.zero_grad(set_to_none=True)
             logits = self.model(images)
             loss = self.criterion(logits, targets)
 
@@ -60,15 +59,15 @@ class FineTuneTrainer(BaseTrainer):
 
             batch_size = images.size(0)
             total_loss += loss.item() * batch_size
-            total_correct += (logits.argmax(1) == targets).sum().item()
+            total_correct += (logits.argmax(dim=1) == targets).sum().item()
             total_samples += batch_size
 
         return {
-            "train_loss": total_loss / total_samples,
-            "train_accuracy": total_correct / total_samples,
+            "loss": total_loss / total_samples,
+            "accuracy": total_correct / total_samples,
         }
 
-    def _validate(self, loader: DataLoader, epoch: int):
+    def _validate(self, loader: DataLoader) -> dict[str, float]:
         self.model.eval()
         total_loss = 0.0
         total_correct = 0
@@ -84,10 +83,10 @@ class FineTuneTrainer(BaseTrainer):
 
                 batch_size = images.size(0)
                 total_loss += loss.item() * batch_size
-                total_correct += (logits.argmax(1) == targets).sum().item()
+                total_correct += (logits.argmax(dim=1) == targets).sum().item()
                 total_samples += batch_size
 
         return {
-            "val_loss": total_loss / total_samples,
-            "val_accuracy": total_correct / total_samples,
+            "loss": total_loss / total_samples,
+            "accuracy": total_correct / total_samples,
         }

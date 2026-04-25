@@ -1,21 +1,24 @@
 """
-Data module (CIFAR-10).
+Data module (CIFAR-10 and CIFAR-10-C).
 
-Expected responsibilities:
+Responsibilities:
 - load train/val/test splits,
 - build DataLoaders for SSL and supervised stages,
-- optionally support CIFAR-10-C for robustness/TTT.
+- expose CIFAR-10-C loaders for robustness/TTT evaluation.
 """
 
-import torch
-from torch.utils.data import DataLoader, Subset
-from torchvision.datasets import CIFAR10
-from src.data.transforms import TransformFactory
+from __future__ import annotations
+
+from pathlib import Path
 
 import numpy as np
-from torch.utils.data import Dataset
+import torch
 from PIL import Image
-from pathlib import Path
+from torch.utils.data import DataLoader, Dataset, Subset
+from torchvision.datasets import CIFAR10
+
+from src.data.transforms import TransformFactory
+
 
 class CIFARDataModule:
 
@@ -121,38 +124,34 @@ class CIFARDataModule:
             num_workers=self.num_workers,
             pin_memory=True,
         )
-        
-    def cifar10c_loader(self, corruption: str, severity: int):
+
+    def cifar10c_loader(self, corruption: str, severity: int) -> DataLoader:
         """
         Load a specific corruption and severity from CIFAR-10-C.
-        Each corruption file contains 50k images:
-        severity 1 = images[0:10000]
-        severity 2 = images[10000:20000]
-        severity 5 = images[40000:50000]
+
+        Each corruption file contains 50k images (5 severities x 10k images).
+        severity 1 -> images[0:10000], severity 5 -> images[40000:50000].
         """
+        if not 1 <= severity <= 5:
+            raise ValueError(f"severity must be in [1, 5], got {severity}.")
 
         path = Path(self.data_root) / "CIFAR-10-C"
-
         images = np.load(path / f"{corruption}.npy")
         labels = np.load(path / "labels.npy")
 
         start = (severity - 1) * 10000
         end = severity * 10000
-
         images = images[start:end]
         labels = labels[start:end]
 
         dataset = CIFAR10CDataset(images, labels, transform=self.eval_tf)
-
-        loader = DataLoader(
+        return DataLoader(
             dataset,
             batch_size=self.batch_size_sup,
             shuffle=False,
             num_workers=self.num_workers,
             pin_memory=True,
         )
-        return loader
-
 
     def split_sizes(self) -> dict[str, int]:
         return {
@@ -162,9 +161,9 @@ class CIFARDataModule:
             "supervised_val": len(self.val_dataset),
             "test": len(self.test_dataset),
         }
-        
+
     @staticmethod
-    def cifar10c_corruptions():
+    def cifar10c_corruptions() -> list[str]:
         return [
             "gaussian_noise", "shot_noise", "impulse_noise",
             "defocus_blur", "glass_blur", "motion_blur",
@@ -173,21 +172,18 @@ class CIFARDataModule:
         ]
 
 
-
 class CIFAR10CDataset(Dataset):
-    """
-    Dataset wrapper for CIFAR-10-C.
-    Each corruption file contains 50k images (5 severities × 10k images).
-    """
+    """Dataset wrapper for one (corruption, severity) slice of CIFAR-10-C."""
+
     def __init__(self, images: np.ndarray, labels: np.ndarray, transform):
         self.images = images
         self.labels = labels
         self.transform = transform
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.images)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int):
         img = Image.fromarray(self.images[idx])
         img = self.transform(img)
-        return img, self.labels[idx]
+        return img, int(self.labels[idx])
