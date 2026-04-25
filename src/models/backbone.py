@@ -20,11 +20,19 @@ class ViTBackboneBuilder:
         "vit_base": {"depth": 12, "num_heads": 12},
     }
 
-    def __init__(self, variant="vit_tiny", patch_size=4, image_size=32, embed_dim=192):
+    def __init__(
+        self,
+        variant: str = "vit_tiny",
+        patch_size: int = 4,
+        image_size: int = 32,
+        embed_dim: int = 192,
+        drop_path_rate: float = 0.0,
+    ) -> None:
         self.variant = variant
         self.patch_size = patch_size
         self.image_size = image_size
         self.embed_dim = embed_dim
+        self.drop_path_rate = drop_path_rate
 
     def build(self):
         if self.variant not in self._VARIANT_SPECS:
@@ -33,11 +41,8 @@ class ViTBackboneBuilder:
         if self.image_size % self.patch_size != 0:
             raise ValueError("image_size must be divisible by patch_size for ViT patch embedding.")
 
-        # ViT splits the image into small patches and processes them
-        # like words in a sentence (same idea as a text Transformer)
-        # patch_size=4 on a 32x32 image gives 64 patches (8x8 grid)
-        # num_classes=0 removes the classification head — we only need
-        # the raw embedding vector (192 numbers), we'll attach the head separately
+        # patch_size=4 on a 32x32 image gives 64 tokens (8x8 grid).
+        # num_classes=0 returns the raw embedding (the classifier head is attached separately).
         spec = self._VARIANT_SPECS[self.variant]
         return VisionTransformer(
             img_size=self.image_size,
@@ -46,4 +51,5 @@ class ViTBackboneBuilder:
             depth=spec["depth"],
             num_heads=spec["num_heads"],
             num_classes=0,
+            drop_path_rate=self.drop_path_rate,
         )
