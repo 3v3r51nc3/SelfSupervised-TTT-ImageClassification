@@ -58,9 +58,9 @@ loss(i, j) = -log(
 The final loss is averaged over all 2N positive pairs in the batch.
 
 Key parameters:
-- temperature τ = 0.5 (from config) — lower = sharper distribution,
+- temperature τ = 0.2 (from config) — lower = sharper distribution,
   model is forced to be more precise about which pairs are similar
-- batch size = 128 → 254 negatives per pair (more negatives = better signal)
+- batch size = 1024 → 2046 negatives per pair (more negatives = better signal)
   this is why drop_last=True is needed — a smaller batch gives fewer negatives
   and makes the loss less stable
 
@@ -407,9 +407,11 @@ fine-tune stage where overfitting is the real risk.
 ### Label smoothing
 
 `nn.CrossEntropyLoss(label_smoothing=0.1)` in the fine-tune trainer.
-Replaces the hard one-hot target with a soft distribution (0.9 on the
-true class, 0.011 spread over the other 9). Calibrates confidence and
-reduces overfitting in the late epochs.
+Replaces the hard one-hot target with a soft distribution: ε=0.1 is
+spread uniformly over all C=10 classes, so the true class gets
+1 − ε + ε/C = 0.91 and each of the other 9 gets ε/C = 0.01
+(Szegedy et al. 2016 convention, which is what PyTorch implements).
+Calibrates confidence and reduces overfitting in the late epochs.
 
 ### Early stopping
 
@@ -442,13 +444,23 @@ Cheap, strong regularizer for transformers.
 
 ---
 
+## Training Hardware
+
+The reported results were produced on **Google Colab** with an
+**NVIDIA A100-SXM4-40GB** (SXM4, 40 GB HBM2e, CUDA 13.0, driver 580.82.07).
+AMP (bfloat16/float16) was enabled for all stages. Total wall-clock time for
+the full default pipeline (200 ep SimCLR + 30 ep linear probe + 30 ep
+fine-tune + Stage C eval) was approximately 2–3 hours on this hardware.
+
+---
+
 ## Config Presets & Notebook Switch
 
 Two YAML configs live in `configs/`:
 
-- **`configs/default.yaml`** — overnight run on L4 / A100. SimCLR 200 ep
+- **`configs/default.yaml`** — overnight run on A100. SimCLR 200 ep
   (batch 1024), fine-tune 30 ep, linear probe 30 ep, full Stage C eval.
-  Approx. 2–3 h on an L4.
+  Approx. 2–3 h on an A100-SXM4-40GB.
 - **`configs/smoke.yaml`** — 2 epochs per stage, batch 256/128, used for
   validating the pipeline end-to-end in roughly 5 minutes before
   committing to an overnight run.
