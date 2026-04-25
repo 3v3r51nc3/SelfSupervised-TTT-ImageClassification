@@ -31,6 +31,9 @@ class CIFARDataModule:
         num_workers=2,
         val_fraction=0.1,
         seed=42,
+        augment_supervised: bool = True,
+        randaugment_n: int = 2,
+        randaugment_m: int = 9,
     ):
         self.data_root = data_root
         self.batch_size_ssl = batch_size_ssl
@@ -39,8 +42,13 @@ class CIFARDataModule:
         self.val_fraction = val_fraction
         self.seed = seed
 
-        factory = TransformFactory(image_size)
+        factory = TransformFactory(
+            image_size=image_size,
+            randaug_n=randaugment_n,
+            randaug_m=randaugment_m,
+        )
         self.simclr_tf = factory.build_simclr()
+        self.sup_train_tf = factory.build_supervised_train(augment=augment_supervised)
         self.eval_tf = factory.build_eval()
 
         self.ssl_train_dataset = None
@@ -56,8 +64,9 @@ class CIFARDataModule:
 
     def setup(self):
         ssl_full = CIFAR10(self.data_root, train=True, transform=self.simclr_tf)
-        supervised_full = CIFAR10(self.data_root, train=True, transform=self.eval_tf)
-        total_examples = len(supervised_full)
+        sup_train_full = CIFAR10(self.data_root, train=True, transform=self.sup_train_tf)
+        sup_val_full = CIFAR10(self.data_root, train=True, transform=self.eval_tf)
+        total_examples = len(sup_val_full)
         n_val = int(total_examples * self.val_fraction)
         n_train = total_examples - n_val
         if n_val <= 0 or n_train <= 0:
@@ -69,8 +78,8 @@ class CIFARDataModule:
 
         self.ssl_train_dataset = Subset(ssl_full, train_indices)
         self.ssl_val_dataset = Subset(ssl_full, val_indices)
-        self.train_dataset = Subset(supervised_full, train_indices)
-        self.val_dataset = Subset(supervised_full, val_indices)
+        self.train_dataset = Subset(sup_train_full, train_indices)
+        self.val_dataset = Subset(sup_val_full, val_indices)
         self.test_dataset = CIFAR10(self.data_root, train=False, transform=self.eval_tf)
 
     def ssl_loaders(self):
@@ -81,6 +90,7 @@ class CIFARDataModule:
             num_workers=self.num_workers,
             pin_memory=True,
             drop_last=True,
+            persistent_workers=self.num_workers > 0,
         )
         val_loader = DataLoader(
             self.ssl_val_dataset,
@@ -89,6 +99,7 @@ class CIFARDataModule:
             num_workers=self.num_workers,
             pin_memory=True,
             drop_last=False,
+            persistent_workers=self.num_workers > 0,
         )
         return train_loader, val_loader
 
@@ -106,6 +117,8 @@ class CIFARDataModule:
             shuffle=True,
             num_workers=self.num_workers,
             pin_memory=True,
+            persistent_workers=self.num_workers > 0,
+            drop_last=True,
         )
         val_loader = DataLoader(
             self.val_dataset,
@@ -113,6 +126,7 @@ class CIFARDataModule:
             shuffle=False,
             num_workers=self.num_workers,
             pin_memory=True,
+            persistent_workers=self.num_workers > 0,
         )
         return train_loader, val_loader
 
