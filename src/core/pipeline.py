@@ -7,18 +7,17 @@ and runs the stages in order:
 - Stage A   - SimCLR self-supervised pretraining of the ViT encoder.
 - Stage B.1 - Linear probe with the frozen encoder (representation quality baseline).
 - Stage B.2 - Full fine-tuning of encoder + classifier.
-- Stage C   - Evaluation of the fine-tuned model on CIFAR-10-C
-              across all corruptions and severities.
-
-Stage D (test-time training) will plug into the same pipeline once
-the TTT adapter is implemented.
+- Stage C   - Robustness eval on CIFAR-10-C (baseline).
+- Stage D   - Test-time training (TENT) on each (corruption, severity) stream.
 """
 
 from __future__ import annotations
 
+import csv
 from pathlib import Path
 
 import torch
+from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 
 from src.core.config import ExperimentConfig
 from src.data.dataset import CIFARDataModule
@@ -29,12 +28,32 @@ from src.models.simclr import SimCLRModel
 from src.training.finetune_trainer import FineTuneTrainer
 from src.training.linear_probe_trainer import LinearProbeTrainer
 from src.training.simclr_trainer import SimCLRTrainer
+from src.ttt.adapter import TestTimeAdapter
 from src.utils.checkpoint import CheckpointManager
 from src.utils.logger import ExperimentLogger
 from src.utils.seed import set_seed
 
 
 CIFAR10_NUM_CLASSES = 10
+
+
+def _build_warmup_cosine(
+    optimizer: torch.optim.Optimizer,
+    total_epochs: int,
+    warmup_epochs: int,
+    min_lr_ratio: float = 0.01,
+):
+    """Linear warmup followed by cosine annealing — both step per epoch."""
+    cosine_epochs = max(total_epochs - warmup_epochs, 1)
+    base_lr = optimizer.param_groups[0]["lr"]
+    eta_min = base_lr * min_lr_ratio
+    cosine = CosineAnnealingLR(optimizer, T_max=cosine_epochs, eta_min=eta_min)
+
+    if warmup_epochs <= 0:
+        return cosine
+
+    warmup = LinearLR(optimizer, start_factor=1e-3, end_factor=1.0, total_iters=warmup_epochs)
+    return SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[warmup_epochs])
 
 
 class ExperimentPipeline:
@@ -64,8 +83,15 @@ class ExperimentPipeline:
             num_workers=self.config.data.num_workers,
             val_fraction=self.config.data.val_fraction,
             seed=self.config.experiment.seed,
+            augment_supervised=self.config.data.augment_supervised,
+            randaugment_n=self.config.data.randaugment_n,
+            randaugment_m=self.config.data.randaugment_m,
         )
-        self.logger.info("Preparing dataset '%s' from %s", self.config.data.dataset, self.config.data.data_root)
+        self.logger.info(
+            "Preparing dataset '%s' from %s",
+            self.config.data.dataset,
+            self.config.data.data_root,
+        )
         data_module.prepare_data()
         data_module.setup()
         split_sizes = data_module.split_sizes()
@@ -112,19 +138,14 @@ class ExperimentPipeline:
                 self.config.data.batch_size_ssl,
             )
 
-            # Stage A - SimCLR pretraining
             encoder_path = self.run_stage_a(ssl_train_loader, ssl_val_loader)
 
-            # Supervised loaders are shared between Stage B.1 and Stage B.2.
             sup_train_loader, sup_val_loader = data_module.supervised_loaders()
 
-            # Stage B.1 - Linear probe
             lp_history = self.run_stage_b1(encoder_path, sup_train_loader, sup_val_loader)
 
-            # Stage B.2 - Full fine-tuning
             ft_model, ft_history = self.run_stage_b2(encoder_path, sup_train_loader, sup_val_loader)
 
-            # Stage C - CIFAR-10-C evaluation on the fine-tuned model
             cifar10c_results = self.run_stage_c(ft_model, data_module)
 
             return {
@@ -148,6 +169,8 @@ class ExperimentPipeline:
     # ------------------------------------------------------------------
 
     def run_stage_a(self, train_loader, val_loader) -> Path:
+        self.checkpoint_mgr.reset_best()
+
         encoder = self._build_encoder()
         simclr_model = SimCLRModel(
             encoder=encoder,
@@ -162,11 +185,20 @@ class ExperimentPipeline:
             self.config.model.projection_dim,
         )
 
-        optimizer = torch.optim.Adam(simclr_model.parameters(), lr=self.config.simclr.learning_rate)
+        optimizer = torch.optim.AdamW(
+            simclr_model.parameters(),
+            lr=self.config.simclr.learning_rate,
+            weight_decay=self.config.simclr.weight_decay,
+        )
+        scheduler = _build_warmup_cosine(
+            optimizer,
+            total_epochs=self.config.simclr.epochs,
+            warmup_epochs=self.config.simclr.warmup_epochs,
+        )
         trainer = SimCLRTrainer(
             model=simclr_model,
             optimizer=optimizer,
-            scheduler=None,
+            scheduler=scheduler,
             device=self.device,
             logger=self.logger,
             checkpoint_mgr=self.checkpoint_mgr,
@@ -174,6 +206,7 @@ class ExperimentPipeline:
             checkpoint_filename="simclr_best.pt",
             temperature=self.config.simclr.temperature,
             log_every_n_steps=self.config.simclr.log_every_n_steps,
+            use_amp=self.config.simclr.use_amp,
         )
 
         self.logger.info("Starting Stage A: SimCLR pretraining")
@@ -198,6 +231,7 @@ class ExperimentPipeline:
 
     def run_stage_b1(self, encoder_path: Path, train_loader, val_loader) -> dict[str, list[float]]:
         self.logger.info("Starting Stage B.1: Linear Probe")
+        self.checkpoint_mgr.reset_best()
 
         encoder = self._build_encoder()
         encoder.load_state_dict(torch.load(encoder_path, map_location=self.device))
@@ -210,19 +244,26 @@ class ExperimentPipeline:
             num_classes=CIFAR10_NUM_CLASSES,
         ).to(self.device)
 
-        optimizer = torch.optim.Adam(
+        optimizer = torch.optim.AdamW(
             lp_model.classifier.parameters(),
             lr=self.config.linear_probe.learning_rate,
+            weight_decay=self.config.linear_probe.weight_decay,
+        )
+        scheduler = _build_warmup_cosine(
+            optimizer,
+            total_epochs=self.config.linear_probe.epochs,
+            warmup_epochs=self.config.linear_probe.warmup_epochs,
         )
         trainer = LinearProbeTrainer(
             model=lp_model,
             optimizer=optimizer,
-            scheduler=None,
+            scheduler=scheduler,
             device=self.device,
             logger=self.logger,
             checkpoint_mgr=self.checkpoint_mgr,
             epochs=self.config.linear_probe.epochs,
             checkpoint_filename="linear_probe_best.pt",
+            use_amp=self.config.linear_probe.use_amp,
         )
 
         history = trainer.fit(train_loader, val_loader)
@@ -237,6 +278,7 @@ class ExperimentPipeline:
         self, encoder_path: Path, train_loader, val_loader
     ) -> tuple[FineTuneModel, dict[str, list[float]]]:
         self.logger.info("Starting Stage B.2: Fine-tuning")
+        self.checkpoint_mgr.reset_best()
 
         encoder = self._build_encoder()
         encoder.load_state_dict(torch.load(encoder_path, map_location=self.device))
@@ -247,51 +289,130 @@ class ExperimentPipeline:
             num_classes=CIFAR10_NUM_CLASSES,
         ).to(self.device)
 
-        optimizer = torch.optim.Adam(
+        optimizer = torch.optim.AdamW(
             ft_model.parameters(),
             lr=self.config.finetune.learning_rate,
+            weight_decay=self.config.finetune.weight_decay,
+        )
+        scheduler = _build_warmup_cosine(
+            optimizer,
+            total_epochs=self.config.finetune.epochs,
+            warmup_epochs=self.config.finetune.warmup_epochs,
         )
         trainer = FineTuneTrainer(
             model=ft_model,
             optimizer=optimizer,
-            scheduler=None,
+            scheduler=scheduler,
             device=self.device,
             logger=self.logger,
             checkpoint_mgr=self.checkpoint_mgr,
             epochs=self.config.finetune.epochs,
             checkpoint_filename="finetune_best.pt",
+            use_amp=self.config.finetune.use_amp,
+            label_smoothing=self.config.finetune.label_smoothing,
+            early_stopping_patience=self.config.finetune.early_stopping_patience,
         )
 
         history = trainer.fit(train_loader, val_loader)
+
+        best_epoch = self.checkpoint_mgr.load_model(
+            ft_model, filename="finetune_best.pt", map_location=self.device,
+        )
+        self.logger.info("Reloaded best fine-tune checkpoint from epoch %d", best_epoch)
         self.logger.info("Completed Stage B.2: Fine-tuning")
         return ft_model, history
 
     # ------------------------------------------------------------------
-    # Stage C
+    # Stage C — robustness eval (baseline + TTT)
     # ------------------------------------------------------------------
 
     def run_stage_c(
         self, model: FineTuneModel, data_module: CIFARDataModule
     ) -> dict[str, dict[int, dict[str, float]]]:
-        self.logger.info("Starting Stage C: CIFAR-10-C evaluation")
+        self.logger.info("Starting Stage C: CIFAR-10-C evaluation (baseline + TTT)")
 
         evaluator = Evaluator(model=model, device=self.device)
-        results: dict[str, dict[int, dict[str, float]]] = {}
+        ttt_enabled = self.config.ttt.enabled
 
+        # Build the adapter once so its snapshot captures the clean fine-tuned weights.
+        # `reset()` restores those weights before each new (corruption, severity) eval.
+        adapter = self._make_ttt_adapter(model) if ttt_enabled else None
+
+        clean_loader = data_module.test_loader()
+        clean_baseline = evaluator.evaluate(clean_loader)
+        self.logger.info(
+            "Clean test - acc=%.4f loss=%.4f",
+            clean_baseline["accuracy"],
+            clean_baseline["loss"],
+        )
+
+        clean_ttt: dict[str, float] | None = None
+        if adapter is not None:
+            clean_ttt = evaluator.evaluate_with_ttt(clean_loader, adapter)
+            self.logger.info(
+                "Clean test (TTT) - acc=%.4f loss=%.4f delta=%+.4f",
+                clean_ttt["accuracy"],
+                clean_ttt["loss"],
+                clean_ttt["accuracy"] - clean_baseline["accuracy"],
+            )
+
+        results: dict[str, dict[int, dict[str, float]]] = {
+            "_clean": {0: {**{f"baseline_{k}": v for k, v in clean_baseline.items()},
+                           **({f"ttt_{k}": v for k, v in clean_ttt.items()} if clean_ttt else {})}},
+        }
+
+        rows: list[dict[str, object]] = []
         for corruption in CIFARDataModule.cifar10c_corruptions():
             results[corruption] = {}
             for severity in range(1, 6):
                 loader = data_module.cifar10c_loader(corruption, severity)
-                metrics = evaluator.evaluate(loader)
-                results[corruption][severity] = metrics
-                self.logger.info(
-                    "CIFAR-10-C %s severity %d - acc=%.4f loss=%.4f",
-                    corruption,
-                    severity,
-                    metrics["accuracy"],
-                    metrics["loss"],
-                )
 
+                if adapter is not None:
+                    adapter.reset()
+                baseline = evaluator.evaluate(loader)
+                row: dict[str, object] = {
+                    "corruption": corruption,
+                    "severity": severity,
+                    "baseline_accuracy": baseline["accuracy"],
+                    "baseline_loss": baseline["loss"],
+                }
+
+                if adapter is not None:
+                    ttt_metrics = evaluator.evaluate_with_ttt(loader, adapter)
+                    row["ttt_accuracy"] = ttt_metrics["accuracy"]
+                    row["ttt_loss"] = ttt_metrics["loss"]
+                    row["delta_accuracy"] = ttt_metrics["accuracy"] - baseline["accuracy"]
+                    self.logger.info(
+                        "CIFAR-10-C %s sev=%d - base_acc=%.4f ttt_acc=%.4f Δ=%+.4f",
+                        corruption,
+                        severity,
+                        baseline["accuracy"],
+                        ttt_metrics["accuracy"],
+                        row["delta_accuracy"],
+                    )
+                    results[corruption][severity] = {
+                        "baseline_accuracy": baseline["accuracy"],
+                        "baseline_loss": baseline["loss"],
+                        "ttt_accuracy": ttt_metrics["accuracy"],
+                        "ttt_loss": ttt_metrics["loss"],
+                        "delta_accuracy": row["delta_accuracy"],
+                    }
+                else:
+                    self.logger.info(
+                        "CIFAR-10-C %s sev=%d - acc=%.4f loss=%.4f",
+                        corruption,
+                        severity,
+                        baseline["accuracy"],
+                        baseline["loss"],
+                    )
+                    results[corruption][severity] = {
+                        "baseline_accuracy": baseline["accuracy"],
+                        "baseline_loss": baseline["loss"],
+                    }
+
+                rows.append(row)
+
+        self._dump_stage_c_csv(rows, clean_baseline, clean_ttt)
         self.logger.info("Completed Stage C: CIFAR-10-C evaluation")
         return results
 
@@ -299,10 +420,52 @@ class ExperimentPipeline:
     # Helpers
     # ------------------------------------------------------------------
 
+    def _make_ttt_adapter(self, model: FineTuneModel) -> TestTimeAdapter:
+        return TestTimeAdapter(
+            model=model,
+            steps=self.config.ttt.steps,
+            learning_rate=self.config.ttt.learning_rate,
+            adapt_scope=self.config.ttt.adapt_scope,
+        )
+
+    def _dump_stage_c_csv(
+        self,
+        rows: list[dict[str, object]],
+        clean_baseline: dict[str, float],
+        clean_ttt: dict[str, float] | None,
+    ) -> None:
+        log_dir = Path(self.config.logging.log_dir) / self.config.experiment.name
+        log_dir.mkdir(parents=True, exist_ok=True)
+        out_path = log_dir / "cifar10c_results.csv"
+
+        fieldnames = [
+            "corruption", "severity",
+            "baseline_accuracy", "baseline_loss",
+            "ttt_accuracy", "ttt_loss", "delta_accuracy",
+        ]
+        with out_path.open("w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            clean_row = {
+                "corruption": "clean",
+                "severity": 0,
+                "baseline_accuracy": clean_baseline["accuracy"],
+                "baseline_loss": clean_baseline["loss"],
+            }
+            if clean_ttt is not None:
+                clean_row["ttt_accuracy"] = clean_ttt["accuracy"]
+                clean_row["ttt_loss"] = clean_ttt["loss"]
+                clean_row["delta_accuracy"] = clean_ttt["accuracy"] - clean_baseline["accuracy"]
+            writer.writerow(clean_row)
+            for row in rows:
+                writer.writerow(row)
+        self.logger.info("Stage C report saved to %s", out_path)
+
     def _build_encoder(self):
         return ViTBackboneBuilder(
             variant=self.config.model.backbone,
             patch_size=self.config.model.patch_size,
             image_size=self.config.data.image_size,
             embed_dim=self.config.model.embed_dim,
+            drop_path_rate=self.config.model.drop_path_rate,
         ).build()
