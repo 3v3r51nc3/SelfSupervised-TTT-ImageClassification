@@ -34,13 +34,13 @@ class SimCLRTrainer(BaseTrainer):
             view_a, view_b = self._extract_views(batch)
 
             self.optimizer.zero_grad(set_to_none=True)
-            z_a, z_b = self.model(view_a, view_b)
-            loss = self._nt_xent_loss(z_a, z_b)
+            with self._autocast():
+                z_a, z_b = self.model(view_a, view_b)
+                loss = self._nt_xent_loss(z_a, z_b)
             if not torch.isfinite(loss):
                 raise ValueError(f"Encountered non-finite training loss at batch {batch_idx}.")
 
-            loss.backward()
-            self.optimizer.step()
+            self._backward_step(loss)
 
             running_loss += float(loss.item())
             self._log_batch_progress(
@@ -63,8 +63,9 @@ class SimCLRTrainer(BaseTrainer):
         with torch.no_grad():
             for batch_idx, batch in enumerate(loader, start=1):
                 view_a, view_b = self._extract_views(batch)
-                z_a, z_b = self.model(view_a, view_b)
-                loss = self._nt_xent_loss(z_a, z_b)
+                with self._autocast():
+                    z_a, z_b = self.model(view_a, view_b)
+                    loss = self._nt_xent_loss(z_a, z_b)
                 if not torch.isfinite(loss):
                     raise ValueError(f"Encountered non-finite validation loss at batch {batch_idx}.")
 
@@ -88,8 +89,9 @@ class SimCLRTrainer(BaseTrainer):
         return view_a, view_b
 
     def _nt_xent_loss(self, z_a: torch.Tensor, z_b: torch.Tensor) -> torch.Tensor:
-        z_a = F.normalize(z_a, dim=1)
-        z_b = F.normalize(z_b, dim=1)
+        # Compute in float32 for numerical stability under AMP.
+        z_a = F.normalize(z_a.float(), dim=1)
+        z_b = F.normalize(z_b.float(), dim=1)
 
         representations = torch.cat([z_a, z_b], dim=0)
         similarity_matrix = torch.matmul(representations, representations.T) / self.temperature

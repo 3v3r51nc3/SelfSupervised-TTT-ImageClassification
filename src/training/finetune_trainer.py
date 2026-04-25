@@ -27,6 +27,9 @@ class FineTuneTrainer(BaseTrainer):
         checkpoint_mgr: CheckpointManager,
         epochs: int,
         checkpoint_filename: str = "finetune_best.pt",
+        use_amp: bool = False,
+        label_smoothing: float = 0.0,
+        early_stopping_patience: int | None = None,
     ) -> None:
         super().__init__(
             model=model,
@@ -37,8 +40,10 @@ class FineTuneTrainer(BaseTrainer):
             checkpoint_mgr=checkpoint_mgr,
             epochs=epochs,
             checkpoint_filename=checkpoint_filename,
+            use_amp=use_amp,
+            early_stopping_patience=early_stopping_patience,
         )
-        self.criterion = nn.CrossEntropyLoss()
+        self.criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
 
     def _train_one_epoch(self, loader: DataLoader) -> dict[str, float]:
         self.model.train()
@@ -47,15 +52,15 @@ class FineTuneTrainer(BaseTrainer):
         total_samples = 0
 
         for images, targets in loader:
-            images = images.to(self.device)
-            targets = targets.to(self.device)
+            images = images.to(self.device, non_blocking=True)
+            targets = targets.to(self.device, non_blocking=True)
 
             self.optimizer.zero_grad(set_to_none=True)
-            logits = self.model(images)
-            loss = self.criterion(logits, targets)
+            with self._autocast():
+                logits = self.model(images)
+                loss = self.criterion(logits, targets)
 
-            loss.backward()
-            self.optimizer.step()
+            self._backward_step(loss)
 
             batch_size = images.size(0)
             total_loss += loss.item() * batch_size
@@ -75,11 +80,12 @@ class FineTuneTrainer(BaseTrainer):
 
         with torch.no_grad():
             for images, targets in loader:
-                images = images.to(self.device)
-                targets = targets.to(self.device)
+                images = images.to(self.device, non_blocking=True)
+                targets = targets.to(self.device, non_blocking=True)
 
-                logits = self.model(images)
-                loss = self.criterion(logits, targets)
+                with self._autocast():
+                    logits = self.model(images)
+                    loss = self.criterion(logits, targets)
 
                 batch_size = images.size(0)
                 total_loss += loss.item() * batch_size
