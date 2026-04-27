@@ -26,29 +26,30 @@ model:
   drop_path_rate: 0.0
 
 simclr:
-  epochs: 2
+  epochs: 200
   temperature: 0.2
   learning_rate: 0.001
   weight_decay: 1.0e-4
-  warmup_epochs: 1
+  warmup_epochs: 10
   use_amp: true
   log_every_n_steps: 50
 
 linear_probe:
-  epochs: 2
-  learning_rate: 0.001
+  epochs: 50
+  learning_rate: 0.1
   weight_decay: 0.0
   warmup_epochs: 0
   use_amp: true
 
 finetune:
-  epochs: 2
+  epochs: 50
   learning_rate: 5.0e-4
   weight_decay: 0.05
-  warmup_epochs: 1
+  warmup_epochs: 5
   label_smoothing: 0.1
   use_amp: true
   early_stopping_patience: 10
+
 
 ttt:
   enabled: true
