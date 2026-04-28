@@ -28,9 +28,9 @@ class CheckpointManager:
         """Forget the best metric — call between stages so trackers don't leak."""
         self._best_metric = None
 
-        # ------------------------------------------------------------------
-        # Public API
-        # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     def save(self, model, optimizer, epoch, metric, filename):
         path = self._dir / filename
