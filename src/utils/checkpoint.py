@@ -28,30 +28,23 @@ class CheckpointManager:
         """Forget the best metric — call between stages so trackers don't leak."""
         self._best_metric = None
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+        # ------------------------------------------------------------------
+        # Public API
+        # ------------------------------------------------------------------
 
-    def save(
-        self,
-        model: nn.Module,
-        optimizer: torch.optim.Optimizer,
-        epoch: int,
-        metric: float,
-        filename: str,
-    ) -> Path:
-        """Unconditionally save a checkpoint and return its path."""
+    def save(self, model, optimizer, epoch, metric, filename):
         path = self._dir / filename
         torch.save(
             {
                 "epoch": epoch,
                 "metric": metric,
-                "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
+                "model": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
             },
             path,
         )
         return path
+
 
     def save_best(
         self,
@@ -61,7 +54,7 @@ class CheckpointManager:
         metric: float,
         filename: str = "best.pt",
         higher_is_better: bool = True,
-    ) -> bool:
+        ) -> bool:
         """Save only when *metric* improves. Returns True if saved."""
         is_better = (
             self._best_metric is None
@@ -75,19 +68,25 @@ class CheckpointManager:
         return False
 
     def load(self, filename: str, map_location: Any = "cpu") -> dict[str, Any]:
-        """Load a checkpoint dict. Caller applies state dicts."""
         path = self._dir / filename
         if not path.exists():
             raise FileNotFoundError(f"Checkpoint not found: {path}")
-        return torch.load(path, map_location=map_location, weights_only=True)
+        return torch.load(path, map_location=map_location)
 
     def load_model(
         self,
         model: nn.Module,
         filename: str,
         map_location: Any = "cpu",
-    ) -> int:
+        ) -> int:
         """Load state dict into *model* and return the saved epoch."""
         ckpt = self.load(filename, map_location=map_location)
-        model.load_state_dict(ckpt["model_state_dict"])
+        model.load_state_dict(ckpt["model"])
         return int(ckpt["epoch"])
+
+    def load_if_exists(self, filename: str, map_location: Any = "cpu"):
+        path = self._dir / filename
+        if path.exists():
+            return torch.load(path, map_location=map_location)
+        return None
+
