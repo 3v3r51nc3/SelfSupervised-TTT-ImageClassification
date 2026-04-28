@@ -20,6 +20,28 @@ from torchvision.datasets import CIFAR10
 from src.data.transforms import TransformFactory
 
 
+import urllib.request
+import tarfile
+
+def download_cifar10c_if_needed(data_root):
+    cifar10c_dir = Path(data_root) / "CIFAR-10-C"
+    if cifar10c_dir.exists():
+        return  # Already downloaded
+
+    url = "https://zenodo.org/record/2535967/files/CIFAR-10-C.tar?download=1"
+    tar_path = Path(data_root) / "CIFAR-10-C.tar"
+
+    print("Downloading CIFAR-10-C...")
+    urllib.request.urlretrieve(url, tar_path)
+
+    print("Extracting CIFAR-10-C...")
+    with tarfile.open(tar_path) as tar:
+        tar.extractall(data_root)
+
+    print("CIFAR-10-C ready.")
+
+
+
 class CIFARDataModule:
 
     def __init__(
@@ -58,9 +80,13 @@ class CIFARDataModule:
         self.test_dataset = None
 
     def prepare_data(self):
-        # download if not already there
+        # download CIFAR-10
         CIFAR10(root=self.data_root, train=True, download=True)
         CIFAR10(root=self.data_root, train=False, download=True)
+
+        # download CIFAR-10-C if missing
+        download_cifar10c_if_needed(self.data_root)
+
 
     def setup(self):
         ssl_full = CIFAR10(self.data_root, train=True, transform=self.simclr_tf)
