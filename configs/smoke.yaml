@@ -26,7 +26,6 @@ model:
   drop_path_rate: 0.0
 
 simclr:
-  resume: "./checkpoints/smoke-test/simclr_best.pt"
   epochs: 200
   temperature: 0.2
   learning_rate: 0.001

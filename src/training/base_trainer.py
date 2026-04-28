@@ -1,78 +1,170 @@
-def fit(self, train_loader, val_loader):
-    history: dict[str, list[float]] = {}
-    epochs_since_improvement = 0
+"""
+Base trainer.
 
-    # --- NEW: try to resume ---
-    start_epoch = 1
-    resume_state = self.checkpoint_mgr.load_if_exists(self.checkpoint_filename)
-    if resume_state is not None:
-        self.logger.info(
-            "Resuming training from checkpoint '%s' (epoch %d)",
-            self.checkpoint_filename,
-            resume_state["epoch"],
-        )
-        self.model.load_state_dict(resume_state["model"])
-        self.optimizer.load_state_dict(resume_state["optimizer"])
-        start_epoch = resume_state["epoch"] + 1
+Contains shared loop structure:
+- train loop,
+- validation loop,
+- AMP (mixed precision),
+- per-epoch scheduler step,
+- best-checkpoint + early stopping.
+"""
 
-    # --- Training loop ---
-    for epoch in range(start_epoch, self.epochs + 1):
-        self.logger.info("Epoch %d/%d started", epoch, self.epochs)
-        train_metrics = self._train_one_epoch(train_loader)
-        val_metrics = self._validate(val_loader)
+from __future__ import annotations
 
-        all_metrics = {
-            **{f"train/{k}": v for k, v in train_metrics.items()},
-            **{f"val/{k}": v for k, v in val_metrics.items()},
-        }
-        self.logger.log_dict(all_metrics, step=epoch)
+from abc import ABC, abstractmethod
+from typing import Any
 
-        for key, value in all_metrics.items():
-            history.setdefault(key, []).append(value)
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader
 
-        primary_metric = val_metrics.get("loss", val_metrics.get("accuracy", 0.0))
-        higher_is_better = "accuracy" in val_metrics and "loss" not in val_metrics
+from src.utils.checkpoint import CheckpointManager
+from src.utils.logger import ExperimentLogger
 
-        saved_best = self.checkpoint_mgr.save_best(
-            self.model,
-            self.optimizer,
-            epoch,
-            primary_metric,
-            filename=self.checkpoint_filename,
-            higher_is_better=higher_is_better,
-        )
 
-        self.logger.info(
-            "Epoch %d/%d completed - train: %s | val: %s",
-            epoch,
-            self.epochs,
-            self._format_metrics(train_metrics),
-            self._format_metrics(val_metrics),
-        )
+class BaseTrainer(ABC):
+    """Shared epoch loop that all stage-specific trainers extend."""
 
-        if saved_best:
-            self.logger.info(
-                "Saved best checkpoint '%s' at epoch %d (metric=%.6f)",
-                self.checkpoint_filename,
+    def __init__(
+        self,
+        model: nn.Module,
+        optimizer: torch.optim.Optimizer,
+        scheduler: torch.optim.lr_scheduler._LRScheduler | None,
+        device: torch.device,
+        logger: ExperimentLogger,
+        checkpoint_mgr: CheckpointManager,
+        epochs: int,
+        checkpoint_filename: str = "best.pt",
+        use_amp: bool = False,
+        early_stopping_patience: int | None = None,
+        grad_clip: float | None = 1.0,
+    ) -> None:
+        self.model = model.to(device)
+        self.optimizer = optimizer
+        self.scheduler = scheduler
+        self.device = device
+        self.logger = logger
+        self.checkpoint_mgr = checkpoint_mgr
+        self.epochs = epochs
+        self.checkpoint_filename = checkpoint_filename
+        self.use_amp = use_amp and device.type == "cuda"
+        self.scaler = torch.amp.GradScaler("cuda", enabled=self.use_amp)
+        self.early_stopping_patience = early_stopping_patience
+        self.grad_clip = grad_clip
+
+    # ------------------------------------------------------------------
+    # Public entry point
+    # ------------------------------------------------------------------
+
+    def fit(
+        self,
+        train_loader: DataLoader,
+        val_loader: DataLoader,
+    ) -> dict[str, list[float]]:
+        """Run the full training loop and return metric history."""
+        history: dict[str, list[float]] = {}
+        epochs_since_improvement = 0
+
+        for epoch in range(1, self.epochs + 1):
+            self.logger.info("Epoch %d/%d started", epoch, self.epochs)
+            train_metrics = self._train_one_epoch(train_loader)
+            val_metrics = self._validate(val_loader)
+
+            all_metrics = {**{f"train/{k}": v for k, v in train_metrics.items()},
+                           **{f"val/{k}": v for k, v in val_metrics.items()}}
+            self.logger.log_dict(all_metrics, step=epoch)
+
+            for key, value in all_metrics.items():
+                history.setdefault(key, []).append(value)
+
+            primary_metric = val_metrics.get("loss", val_metrics.get("accuracy", 0.0))
+            higher_is_better = "accuracy" in val_metrics and "loss" not in val_metrics
+            saved_best = self.checkpoint_mgr.save_best(
+                self.model,
+                self.optimizer,
                 epoch,
                 primary_metric,
+                filename=self.checkpoint_filename,
+                higher_is_better=higher_is_better,
             )
-            epochs_since_improvement = 0
-        else:
-            epochs_since_improvement += 1
-
-        if self.scheduler is not None:
-            self.scheduler.step()
-
-        if (
-            self.early_stopping_patience is not None
-            and epochs_since_improvement >= self.early_stopping_patience
-        ):
             self.logger.info(
-                "Early stopping triggered after %d epochs without improvement (epoch %d).",
-                self.early_stopping_patience,
+                "Epoch %d/%d completed - train: %s | val: %s",
                 epoch,
+                self.epochs,
+                self._format_metrics(train_metrics),
+                self._format_metrics(val_metrics),
             )
-            break
+            if saved_best:
+                self.logger.info(
+                    "Saved best checkpoint '%s' at epoch %d (metric=%.6f)",
+                    self.checkpoint_filename,
+                    epoch,
+                    primary_metric,
+                )
+                epochs_since_improvement = 0
+            else:
+                self.logger.debug(
+                    "Skipped checkpoint update for '%s' at epoch %d (metric=%.6f)",
+                    self.checkpoint_filename,
+                    epoch,
+                    primary_metric,
+                )
+                epochs_since_improvement += 1
 
-    return history
+            if self.scheduler is not None:
+                self.scheduler.step()
+
+            if (
+                self.early_stopping_patience is not None
+                and epochs_since_improvement >= self.early_stopping_patience
+            ):
+                self.logger.info(
+                    "Early stopping triggered after %d epochs without improvement (epoch %d).",
+                    self.early_stopping_patience,
+                    epoch,
+                )
+                break
+
+        return history
+
+    # ------------------------------------------------------------------
+    # Abstract hooks
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    def _train_one_epoch(self, loader: DataLoader) -> dict[str, float]:
+        """Run one training epoch. Return a dict of metric name → value."""
+
+    @abstractmethod
+    def _validate(self, loader: DataLoader) -> dict[str, float]:
+        """Run one validation pass. Return a dict of metric name → value."""
+
+    # ------------------------------------------------------------------
+    # Shared helpers
+    # ------------------------------------------------------------------
+
+    def _backward_step(self, loss: torch.Tensor) -> None:
+        """Common AMP-aware backward + optimizer step."""
+        self.scaler.scale(loss).backward()
+        if self.grad_clip is not None:
+            self.scaler.unscale_(self.optimizer)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
+        self.scaler.step(self.optimizer)
+        self.scaler.update()
+
+    def _autocast(self):
+        return torch.amp.autocast("cuda", enabled=self.use_amp)
+
+    def _to_device(self, batch: Any) -> Any:
+        """Recursively move tensors in *batch* to self.device."""
+        if isinstance(batch, torch.Tensor):
+            return batch.to(self.device, non_blocking=True)
+        if isinstance(batch, (list, tuple)):
+            moved = [self._to_device(item) for item in batch]
+            return type(batch)(moved)
+        return batch
+
+    def _format_metrics(self, metrics: dict[str, float]) -> str:
+        if not metrics:
+            return "no metrics"
+        return ", ".join(f"{key}={value:.6f}" for key, value in metrics.items())
