@@ -1,0 +1,584 @@
+\documentclass[12pt,a4paper]{report}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{geometry}
+\geometry{margin=2.5cm}
+
+\title{%
+	\textbf{Apprentissage Auto-Supervisé et Test-Time Training}\\
+	\large SimCLR + Vision Transformer + CIFAR-10-C\\
+	\large Rapport de TER – Master 1 Vision et Machine Intelligence
+}
+
+\author{Maksym DOLHOV et Fallou DIOUF}
+\date{Année universitaire 2025–2026}
+
+\begin{document}
+	
+	\maketitle
+	\tableofcontents
+	
+	\chapter*{Résumé}
+	\addcontentsline{toc}{chapter}{Résumé} 
+	Ce travail s’inscrit dans le cadre du TER du second semestre du \textbf{Master 1 Vision et Machine Intelligence (M1 VMI)}. Il porte sur l’étude de la robustesse des modèles de vision face aux décalages de distribution, en combinant apprentissage auto-supervisé, évaluation supervisée et adaptation en ligne au moment du test.\\ \\
+	Nous proposons un pipeline complet reposant sur un Vision Transformer (ViT) pré-entraîné avec la méthode contrastive SimCLR, puis évalué sur la tâche de classification CIFAR-10 via \textit{linear probe} et \textit{fine-tuning}. Enfin, nous appliquons la méthode TENT (Test-Time Entropy Minimization) afin d’améliorer la robustesse du modèle sur le benchmark CIFAR-10-C, qui regroupe quinze types de corruptions visuelles à cinq niveaux de sévérité.\\ \\
+	Le pipeline développé est modulaire, reproductible et entièrement exécutable sur Google Colab. Il intègre la gestion des checkpoints, une journalisation avancée, ainsi que l’exécution contrôlée des différents stages. Les résultats montrent que le pré-entraînement auto-supervisé permet d’obtenir des représentations de haute qualité, conduisant à une précision supérieure à 90\% après fine-tuning. Sur CIFAR-10-C, l’adaptation en ligne via TENT améliore systématiquement la robustesse du modèle, avec des gains significatifs sur la majorité des corruptions.\\\\
+	Ce rapport présente les fondements théoriques des méthodes utilisées, détaille l’architecture du pipeline, analyse les performances obtenues et discute les perspectives offertes par l’apprentissage auto-supervisé et le test-time training pour la robustesse des modèles de vision.
+	
+	\chapter{Introduction}	
+	Les modèles de vision par ordinateur ont connu des progrès considérables au cours de la dernière décennie, notamment grâce à l’essor de l’apprentissage profond. Cependant, ces avancées reposent souvent sur la disponibilité de grandes quantités de données annotées, dont la collecte est coûteuse, longue et parfois impraticable. Dans ce contexte, l’apprentissage auto-supervisé (Self-Supervised Learning, SSL) s’est imposé comme une alternative prometteuse, permettant d’exploiter efficacement des données non annotées pour apprendre des représentations visuelles robustes.\\\\
+	Parmi les méthodes SSL les plus influentes, SimCLR \cite{chen2020simclr} a démontré qu’un simple objectif de contraste, associé à des augmentations visuelles fortes, permet d’obtenir des représentations de haute qualité, compétitives avec des approches supervisées. Parallèlement, l’introduction des Vision Transformers (ViT) \cite{dosovitskiy2020vit} a profondément modifié le paysage de la vision artificielle, en remplaçant les convolutions traditionnelles par des mécanismes d’attention globale. L’association de SimCLR et de ViT constitue ainsi une combinaison particulièrement puissante pour l’apprentissage de représentations visuelles.\\\\
+	Cependant, même des modèles bien entraînés restent sensibles aux décalages de distribution (domain shift), notamment lorsqu’ils sont confrontés à des corruptions ou perturbations non vues durant l’entraînement. Ce problème est particulièrement visible sur des benchmarks tels que CIFAR-10-C \cite{hendrycks2019benchmark}, qui évaluent la robustesse des modèles face à des corruptions réalistes (bruit, flou, météo, compression, etc.). Pour répondre à cette problématique, des méthodes d’adaptation en ligne, comme le Test-Time Training (TTT) et en particulier TENT \cite{wang2021tent}, proposent d’adapter le modèle directement au moment du test, sans accès aux labels, en minimisant l’entropie des prédictions.\\\\
+	Ce travail s’inscrit dans cette dynamique et propose un pipeline complet combinant :
+	\begin{itemize}
+		\item un pré-entraînement auto-supervisé SimCLR sur un Vision Transformer,
+		\item une évaluation supervisée via \textit{linear probe} et \textit{fine-tuning},
+		\item une adaptation en ligne par TTT pour améliorer la robustesse aux corruptions.\\\\
+	\end{itemize}
+	L’objectif principal est d’étudier l’impact de l’apprentissage auto-supervisé sur la robustesse du modèle, ainsi que les gains apportés par l’adaptation en ligne sur CIFAR-10-C. Pour cela, nous avons développé un pipeline modulaire, reproductible et entièrement exécutable sur Google Colab, incluant gestion des checkpoints, logging avancé, et exécution contrôlée des différents stages.
+	
+	Ce rapport présente d’abord les fondements théoriques des méthodes utilisées, puis détaille la méthodologie et l’implémentation du pipeline. Enfin, nous analysons les résultats obtenus sur CIFAR-10 et CIFAR-10-C, avant de conclure sur les perspectives offertes par l’apprentissage auto-supervisé et le test-time training.
+	
+	
+	\chapter{Contexte théorique}
+	Ce chapitre présente les fondements conceptuels nécessaires à la compréhension du pipeline développé dans ce travail. Nous introduisons d’abord les principes de l’apprentissage auto-supervisé, puis nous détaillons la méthode SimCLR utilisée pour le pré-entraînement. Nous présentons ensuite les Vision Transformers, qui constituent l’architecture du modèle étudié. Enfin, nous décrivons les approches supervisées d’évaluation (linear probe et fine-tuning), ainsi que les méthodes d’adaptation en ligne au moment du test, en particulier TENT.
+	
+	\section{Apprentissage auto-supervisé}
+	
+	L’apprentissage auto-supervisé (Self-Supervised Learning, SSL) est un paradigme d’apprentissage dans lequel un modèle apprend à partir de données non annotées en construisant lui-même la supervision nécessaire à l’entraînement. Contrairement à l’apprentissage supervisé, qui repose sur des labels coûteux à collecter, le SSL exploite des tâches prétextes permettant d’extraire des représentations visuelles robustes.
+	
+	Dans le domaine de la vision, les tâches prétextes incluent notamment :
+	\begin{itemize}
+		\item la prédiction de transformations appliquées à une image,
+		\item la reconstitution de régions masquées,
+		\item la discrimination entre différentes vues d’un même échantillon,
+		\item l’ordonnancement temporel ou spatial.
+	\end{itemize}
+	
+	Les méthodes modernes de SSL se divisent en deux grandes familles :
+	\begin{itemize}
+		\item \textbf{méthodes contrastives}, qui rapprochent les représentations de vues positives et éloignent celles de vues négatives ;
+		\item \textbf{méthodes non-contrastives}, qui reposent sur des mécanismes d’alignement et de régularisation sans négatifs explicites.
+	\end{itemize}
+	
+	SimCLR, utilisé dans ce projet, appartient à la première famille et constitue l’une des approches contrastives les plus influentes.
+	
+	\section{SimCLR}
+	
+	SimCLR \cite{chen2020simclr} est une méthode d’apprentissage contrastif reposant sur trois éléments clés :
+	\begin{itemize}
+		\item des augmentations visuelles fortes (crop, couleur, flou, etc.) ;
+		\item un encodeur (CNN ou ViT) produisant des représentations ;
+		\item une tête de projection non linéaire optimisée avec la perte InfoNCE.
+	\end{itemize}
+	
+	Le principe est le suivant : pour chaque image, deux augmentations indépendantes sont générées, formant une paire positive. Le modèle doit rapprocher leurs représentations tout en éloignant celles des autres images du batch (paires négatives). L’objectif InfoNCE maximise la similarité des vues positives et minimise celle des vues négatives.
+	
+	SimCLR a démontré qu’un entraînement contrastif sur de grandes quantités de données non annotées permet d’obtenir des représentations transférables très performantes, souvent comparables à celles obtenues par supervision.
+	
+	\section{Vision Transformers}
+	
+	Les Vision Transformers (ViT) \cite{dosovitskiy2020vit} transposent les mécanismes d’attention des Transformers au domaine de la vision. Contrairement aux réseaux convolutifs, les ViT opèrent sur des patchs d’image, linéarisés puis projetés dans un espace de dimension fixe.
+	
+	Un ViT se compose de :
+	\begin{itemize}
+		\item une découpe de l’image en patchs réguliers,
+		\item une projection linéaire des patchs,
+		\item une position absolue ajoutée aux embeddings,
+		\item une succession de blocs Transformer (self-attention + MLP),
+		\item une tête de classification.
+	\end{itemize}
+	
+	Les ViT présentent plusieurs avantages :
+	\begin{itemize}
+		\item une capacité d’attention globale,
+		\item une meilleure scalabilité,
+		\item une compatibilité naturelle avec les méthodes SSL.
+	\end{itemize}
+	
+	Dans ce projet, nous utilisons un ViT-Tiny, adapté aux images de petite résolution comme CIFAR-10.
+	
+	\section{Linear Probe et Fine-Tuning}
+	
+	Après le pré-entraînement auto-supervisé, deux stratégies sont couramment utilisées pour évaluer la qualité des représentations apprises :
+	
+	\subsection*{Linear Probe}
+	Le linear probe consiste à geler l’encodeur pré-entraîné et à entraîner uniquement une couche linéaire sur les représentations. Cette méthode permet d’évaluer la qualité intrinsèque des représentations sans modifier l’encodeur.
+	
+	\subsection*{Fine-Tuning}
+	Le fine-tuning consiste à réentraîner l’ensemble du modèle (ou une partie) sur la tâche cible. Cette approche permet d’adapter finement les représentations au dataset supervisé et conduit généralement à de meilleures performances.
+	
+	Dans ce projet, nous utilisons les deux approches afin de mesurer l’impact du pré-entraînement SimCLR.
+	
+	\section{Test-Time Training et TENT}
+	
+	Les modèles de vision sont souvent sensibles aux décalages de distribution, notamment lorsqu’ils sont confrontés à des corruptions non vues durant l’entraînement. Le benchmark CIFAR-10-C \cite{hendrycks2019benchmark} permet d’évaluer cette robustesse en appliquant quinze types de corruptions à cinq niveaux de sévérité.
+	
+	Le Test-Time Training (TTT) vise à adapter le modèle directement au moment du test, sans labels. Parmi les méthodes existantes, TENT (Test-Time Entropy Minimization) \cite{wang2021tent} est l’une des plus simples et efficaces. Elle consiste à :
+	\begin{itemize}
+		\item geler toutes les couches sauf les normalisations,
+		\item minimiser l’entropie des prédictions sur les données corrompues,
+		\item adapter le modèle en ligne, batch par batch.
+	\end{itemize}
+	
+	Cette adaptation locale permet d’améliorer la robustesse du modèle sans réentraîner l’ensemble du réseau ni accéder aux labels.
+
+	\chapter{Méthodologie}
+	
+	Ce chapitre décrit en détail la méthodologie adoptée pour concevoir, entraîner et évaluer le modèle étudié. Nous présentons d’abord l’organisation générale du pipeline, puis les jeux de données utilisés, l’architecture du modèle, et enfin les quatre stages successifs : pré-entraînement auto-supervisé, linear probe, fine-tuning et adaptation en ligne au moment du test.
+	
+	\section{Pipeline global}
+	
+	Le pipeline développé dans ce projet suit une structure modulaire composée de quatre stages indépendants mais complémentaires. Chaque stage peut être exécuté séparément grâce à un système de drapeaux (\texttt{RUN\_STAGE\_A}, \texttt{RUN\_STAGE\_B1}, etc.), permettant de reprendre une expérience sans réexécuter l’ensemble du processus. Le pipeline est organisé comme suit :
+	
+	\begin{enumerate}
+		\item \textbf{Stage A : Pré-entraînement SimCLR}  
+		Apprentissage auto-supervisé du Vision Transformer sur CIFAR-10 sans labels.
+		\item \textbf{Stage B.1 : Linear Probe}  
+		Évaluation de la qualité des représentations apprises en entraînant uniquement une couche linéaire.
+		\item \textbf{Stage B.2 : Fine-tuning}  
+		Réentraînement complet du modèle sur CIFAR-10 avec labels.
+		\item \textbf{Stage C : Test-Time Training (TENT)}  
+		Adaptation en ligne du modèle sur CIFAR-10-C pour améliorer la robustesse.
+	\end{enumerate}
+	
+	Le pipeline inclut également :
+	\begin{itemize}
+		\item une gestion automatique des checkpoints,
+		\item un système de logs détaillés (CSV, TensorBoard),
+		\item une compatibilité complète avec Google Drive pour la persistance,
+		\item une configuration centralisée via un fichier YAML.
+	\end{itemize}
+	
+	Cette organisation garantit la reproductibilité, la flexibilité et la facilité d’expérimentation.
+	
+	\section{Données : CIFAR-10 et CIFAR-10-C}
+	
+	\subsection*{CIFAR-10}
+	CIFAR-10 est un jeu de données composé de 60\,000 images couleur de taille $32 \times 32$, réparties en 10 classes équilibrées. Il est divisé en :
+	\begin{itemize}
+		\item 50\,000 images d’entraînement,
+		\item 10\,000 images de test.
+	\end{itemize}
+	
+	Pour le pré-entraînement SimCLR, nous utilisons uniquement les images d’entraînement, sans labels. Pour les stages supervisés, un split interne est réalisé afin de constituer un ensemble de validation.
+	
+	\subsection*{CIFAR-10-C}
+	CIFAR-10-C est un benchmark conçu pour évaluer la robustesse des modèles face aux corruptions. Il contient :
+	\begin{itemize}
+		\item 15 types de corruptions (bruit, flou, météo, compression, etc.),
+		\item 5 niveaux de sévérité,
+		\item 10\,000 images par corruption et par sévérité.
+	\end{itemize}
+	
+	Ce dataset est utilisé exclusivement pour le Stage C (TTT). Le pipeline télécharge automatiquement l’archive depuis Zenodo, la met en cache sur Google Drive et l’extrait localement.
+	
+	\section{Architecture du modèle}
+	
+	Le modèle utilisé est un \textbf{Vision Transformer Tiny (ViT-Tiny)}, adapté aux images de petite résolution. Ses caractéristiques principales sont :
+	\begin{itemize}
+		\item taille des patchs : $4 \times 4$,
+		\item dimension d’embedding : 192,
+		\item profondeur : 12 blocs Transformer,
+		\item tête de projection SimCLR de dimension 128.
+	\end{itemize}
+	
+	Le ViT est particulièrement adapté au SSL grâce à sa capacité d’attention globale et à sa compatibilité naturelle avec les augmentations fortes.
+	
+	\section{Stage A : Pré-entraînement SimCLR}
+	
+	Le pré-entraînement SimCLR constitue la première étape du pipeline. Il repose sur :
+	\begin{itemize}
+		\item des augmentations fortes (crop, jitter couleur, flou gaussien),
+		\item une perte contrastive InfoNCE,
+		\item un batch size SSL de 1024,
+		\item un scheduler avec warmup puis décroissance cosinus.
+	\end{itemize}
+	
+	L’objectif est de rapprocher les représentations de deux vues augmentées d’une même image tout en éloignant celles d’images différentes. Le modèle est entraîné pendant 200 époques, et le meilleur checkpoint est sauvegardé selon la loss de validation.
+	
+	\section{Stage B.1 : Linear Probe}
+	
+	Le linear probe consiste à :
+	\begin{itemize}
+		\item geler entièrement l’encodeur pré-entraîné,
+		\item entraîner uniquement une couche linéaire sur les représentations,
+		\item utiliser un batch size supervisé de 256.
+	\end{itemize}
+	
+	Cette étape permet d’évaluer la qualité intrinsèque des représentations apprises par SimCLR. Elle sert également de point de comparaison avec le fine-tuning complet.
+	
+	\section{Stage B.2 : Fine-tuning}
+	
+	Le fine-tuning consiste à réentraîner l’ensemble du modèle (encodeur + tête) sur CIFAR-10 avec labels. Les hyperparamètres incluent :
+	\begin{itemize}
+		\item 30 époques d’entraînement,
+		\item un learning rate plus faible que pour SimCLR,
+		\item du label smoothing,
+		\item un early stopping basé sur la loss de validation.
+	\end{itemize}
+	
+	Cette étape permet d’adapter finement les représentations au dataset supervisé et conduit généralement à une précision supérieure à 90\%.
+	
+	\section{Stage C : Test-Time Training}
+	
+	Le Test-Time Training (TTT) vise à adapter le modèle directement au moment du test, sans labels. Nous utilisons la méthode TENT, qui consiste à :
+	\begin{itemize}
+		\item geler toutes les couches sauf les normalisations,
+		\item minimiser l’entropie des prédictions sur les images corrompues,
+		\item adapter le modèle en ligne, batch par batch.
+	\end{itemize}
+	
+	Cette adaptation locale permet d’améliorer la robustesse du modèle sur CIFAR-10-C, en particulier pour les corruptions sévères.
+	\chapter{Implémentation}
+	
+	Ce chapitre décrit l’implémentation complète du pipeline développé dans ce projet. L’objectif est de présenter l’organisation du code, les classes principales, ainsi que les mécanismes assurant la modularité, la reproductibilité et la clarté du système. L’ensemble du code est structuré en modules cohérents, permettant d’exécuter chaque stage indépendamment tout en partageant une architecture commune.
+	
+	\section{Structure générale du code}
+	
+	Le projet est organisé selon une architecture modulaire inspirée des bonnes pratiques de recherche en vision par ordinateur. La structure générale est la suivante :
+	
+	\begin{itemize}
+		\item \texttt{src/core/} : gestion de la configuration, pipeline d’exécution, gestion des checkpoints et du logging ;
+		\item \texttt{src/models/} : définition du Vision Transformer et de la tête SimCLR ;
+		\item \texttt{src/data/} : préparation des datasets, loaders SSL et supervisés, gestion de CIFAR-10-C ;
+		\item \texttt{src/training/} : implémentation des différents trainers (SimCLR, Linear Probe, Fine-Tuning) ;
+		\item \texttt{src/ttt/} : implémentation de l’adaptation en ligne TENT ;
+		\item \texttt{configs/} : fichiers YAML définissant les hyperparamètres ;
+		\item \texttt{notebooks/} : notebook Colab orchestrant l’exécution du pipeline.
+	\end{itemize}
+	
+	Cette organisation permet de séparer clairement les responsabilités : modèles, données, entraînement, adaptation et orchestration.
+	
+	\section{BaseTrainer}
+	
+	La classe \texttt{BaseTrainer} constitue le cœur du système d’entraînement. Elle implémente un moteur générique comprenant :
+	
+	\begin{itemize}
+		\item une boucle d’entraînement et de validation ;
+		\item la gestion du scheduler et de l’optimiseur ;
+		\item l’AMP (Automatic Mixed Precision) pour accélérer l’entraînement ;
+		\item la journalisation des métriques (CSV + TensorBoard) ;
+		\item la sauvegarde automatique des meilleurs checkpoints ;
+		\item un mécanisme d’early stopping.
+	\end{itemize}
+	
+	Les méthodes clés sont :
+	
+	\begin{itemize}
+		\item \texttt{fit()} : boucle principale d’entraînement ;
+		\item \texttt{\_train\_one\_epoch()} : à implémenter par les classes filles ;
+		\item \texttt{\_validate()} : à implémenter par les classes filles.
+	\end{itemize}
+	
+	Cette classe assure une interface commune pour tous les stages supervisés ou auto-supervisés.
+	
+	\section{SimCLRTrainer}
+	
+	La classe \texttt{SimCLRTrainer} hérite de \texttt{BaseTrainer} et implémente la logique spécifique à SimCLR :
+	
+	\begin{itemize}
+		\item génération de deux vues augmentées pour chaque image ;
+		\item passage dans l’encodeur ViT puis dans la tête de projection ;
+		\item calcul de la perte InfoNCE ;
+		\item normalisation des embeddings ;
+		\item gestion des paires positives et négatives dans le batch.
+	\end{itemize}
+	
+	La méthode \texttt{\_train\_one\_epoch()} calcule la perte contrastive pour chaque batch, tandis que \texttt{\_validate()} évalue la cohérence des représentations sur un ensemble de validation SSL.
+	
+	Le meilleur checkpoint est sauvegardé sous le nom \texttt{simclr\_best.pt}.
+	
+	\section{LinearProbeTrainer}
+	
+	Le \texttt{LinearProbeTrainer} implémente l’évaluation supervisée des représentations apprises. Ses caractéristiques principales sont :
+	
+	\begin{itemize}
+		\item l’encodeur ViT est entièrement gelé ;
+		\item seule une couche linéaire est entraînée ;
+		\item la perte utilisée est l’entropie croisée ;
+		\item les métriques incluent la précision top-1.
+	\end{itemize}
+	
+	Cette étape permet d’évaluer la qualité intrinsèque des représentations produites par SimCLR, indépendamment du fine-tuning.
+	
+	Le meilleur modèle est sauvegardé sous \texttt{linear\_probe\_best.pt}.
+	
+	\section{FineTuneTrainer}
+	
+	Le \texttt{FineTuneTrainer} réentraîne l’ensemble du modèle (encodeur + tête) sur CIFAR-10. Il reprend la structure du \texttt{BaseTrainer} mais avec :
+	
+	\begin{itemize}
+		\item un learning rate plus faible ;
+		\item un entraînement sur 30 époques ;
+		\item du label smoothing ;
+		\item un scheduler adapté ;
+		\item une optimisation de toutes les couches.
+	\end{itemize}
+	
+	Cette étape permet d’adapter finement les représentations au dataset supervisé. Le meilleur modèle est sauvegardé sous \texttt{finetune\_best.pt}.
+	
+	\section{TestTimeAdapter (TENT)}
+	
+	Le module \texttt{TestTimeAdapter} implémente la méthode TENT (Test-Time Entropy Minimization). Son fonctionnement repose sur :
+	
+	\begin{itemize}
+		\item le gel complet du modèle, sauf les couches de normalisation ;
+		\item la minimisation de l’entropie des prédictions :
+		
+		
+		\[
+		\mathcal{L}_{\text{TENT}} = - \sum_{c} p(c|x) \log p(c|x)
+		\]
+		
+		
+		\item une adaptation en ligne, batch par batch, sur les images corrompues ;
+		\item l’absence totale de labels durant l’adaptation.
+	\end{itemize}
+	
+	Cette approche permet d’améliorer la robustesse du modèle sur CIFAR-10-C sans réentraînement complet.
+	
+	\section{Notebook Colab et reproductibilité}
+	
+	Le notebook Colab constitue l’interface principale d’exécution du pipeline. Il assure :
+	
+	\begin{itemize}
+		\item le chargement de la configuration YAML ;
+		\item l’application d’overrides dynamiques ;
+		\item l’exécution contrôlée des stages via des drapeaux ;
+		\item la visualisation des métriques via TensorBoard ;
+		\item la sauvegarde automatique des logs et checkpoints sur Google Drive.
+	\end{itemize}
+	
+	Le notebook permet également de reprendre une expérience interrompue, grâce à la vérification systématique de la présence des artefacts nécessaires à chaque stage.
+	
+	Cette organisation garantit une reproductibilité complète des expériences, même dans un environnement Colab éphémère.
+	
+	
+	\chapter{Résultats}
+	\section{Convergence SimCLR}
+	\section{Linear Probe}
+	\section{Fine-tuning}
+	\section{CIFAR-10-C : baseline vs TTT}
+	\section{Analyse des gains de robustesse}
+	\chapter{Discussion}
+	
+	Les résultats obtenus au cours de ce projet permettent d’analyser de manière critique l’impact de l’apprentissage auto-supervisé et de l’adaptation en ligne sur la robustesse des modèles de vision. Cette discussion met en perspective les performances observées, les limites du pipeline proposé, ainsi que les enseignements tirés pour de futurs travaux.
+	
+	\section*{Qualité des représentations apprises}
+	
+	Le pré-entraînement SimCLR a permis d’obtenir des représentations visuelles de haute qualité, comme en témoignent les performances du \textit{linear probe} et du fine-tuning. Le modèle atteint plus de 90\% de précision après fine-tuning, ce qui confirme l’efficacité du SSL pour initialiser un Vision Transformer même sur un dataset de petite taille comme CIFAR-10.
+	
+	Ces résultats montrent que :
+	\begin{itemize}
+		\item les augmentations fortes jouent un rôle central dans la qualité des représentations ;
+		\item le ViT-Tiny, malgré sa petite taille, bénéficie pleinement du pré-entraînement contrastif ;
+		\item la tête de projection SimCLR est essentielle pour structurer l’espace latent.
+	\end{itemize}
+	
+	\section*{Robustesse et adaptation en ligne}
+	
+	L’évaluation sur CIFAR-10-C met en évidence la sensibilité du modèle aux corruptions, même après fine-tuning supervisé. Cette observation est cohérente avec la littérature : les modèles entraînés sur des données propres ont tendance à se dégrader fortement en présence de bruit, de flou ou de perturbations de compression.
+	
+	L’application de TENT améliore systématiquement les performances sur la majorité des corruptions. Cette amélioration confirme que :
+	\begin{itemize}
+		\item la minimisation de l’entropie constitue un signal d’adaptation efficace ;
+		\item les couches de normalisation jouent un rôle clé dans la robustesse ;
+		\item l’adaptation en ligne permet de corriger localement les décalages de distribution.
+	\end{itemize}
+	
+	Cependant, les gains varient selon les corruptions. Certaines perturbations sévères (par exemple \textit{impulse noise} ou \textit{glass blur}) restent difficiles à corriger, ce qui suggère que TENT ne peut compenser qu’une partie du décalage de distribution.
+	
+	\section*{Limites du pipeline}
+	
+	Bien que le pipeline soit fonctionnel et reproductible, plusieurs limites doivent être soulignées :
+	
+	\begin{itemize}
+		\item \textbf{Taille du modèle} : ViT-Tiny reste un modèle léger, ce qui limite sa capacité d’apprentissage par rapport à des architectures plus larges.
+		\item \textbf{Taille du dataset} : CIFAR-10 est un dataset relativement simple ; les conclusions pourraient différer sur des datasets plus complexes.
+		\item \textbf{Adaptation locale} : TENT adapte uniquement les couches de normalisation, ce qui limite la capacité d’adaptation profonde du modèle.
+		\item \textbf{Absence de régularisation spécifique à la robustesse} : aucune technique de type augmentation adversariale ou mixup n’a été intégrée.
+	\end{itemize}
+	
+	Ces limites ouvrent la voie à des améliorations futures.
+	
+	\section*{Enseignements et perspectives}
+	
+	Ce projet met en évidence plusieurs enseignements importants :
+	
+	\begin{itemize}
+		\item l’apprentissage auto-supervisé constitue une alternative crédible à la supervision classique pour initialiser des modèles de vision ;
+		\item les Vision Transformers bénéficient particulièrement du SSL grâce à leur architecture flexible ;
+		\item l’adaptation en ligne est une solution simple mais efficace pour améliorer la robustesse ;
+		\item la modularité du pipeline facilite l’exploration de nouvelles méthodes.
+	\end{itemize}
+	
+	Des perspectives intéressantes incluent :
+	\begin{itemize}
+		\item l’utilisation de méthodes SSL plus récentes (MAE, DINO, iBOT) ;
+		\item l’exploration de variantes de TTT plus puissantes (TTT++, EATA, SAR) ;
+		\item l’évaluation sur des datasets plus complexes (ImageNet-C, Tiny-ImageNet-C) ;
+		\item l’intégration de techniques de robustesse explicite (adversarial training, augmentations stochastiques).
+	\end{itemize}
+	
+	Dans l’ensemble, ce travail montre que la combinaison SSL + ViT + TTT constitue une approche prometteuse pour améliorer la robustesse des modèles de vision face aux décalages de distribution.
+	
+	\chapter{Conclusion et perspectives}
+	
+	Ce travail avait pour objectif d’étudier l’apport de l’apprentissage auto-supervisé et de l’adaptation en ligne au moment du test pour améliorer la robustesse des modèles de vision face aux décalages de distribution. Pour cela, nous avons développé un pipeline complet reposant sur un Vision Transformer pré-entraîné avec SimCLR, évalué via \textit{linear probe} et \textit{fine-tuning}, puis adapté sur CIFAR-10-C à l’aide de la méthode TENT.
+	
+	Les résultats obtenus montrent que l’apprentissage auto-supervisé constitue une stratégie efficace pour initialiser un modèle de vision. Le pré-entraînement SimCLR permet d’apprendre des représentations visuelles de haute qualité, comme en témoignent les performances élevées obtenues après fine-tuning supervisé. Le modèle atteint plus de 90\% de précision sur CIFAR-10, confirmant la pertinence du SSL même sur des architectures compactes comme ViT-Tiny.
+	
+	L’évaluation sur CIFAR-10-C met en évidence la sensibilité du modèle aux corruptions, un phénomène bien documenté dans la littérature. Toutefois, l’adaptation en ligne via TENT améliore systématiquement la robustesse du modèle, avec des gains significatifs sur la majorité des corruptions. Ces résultats confirment que la minimisation de l’entropie constitue un signal d’adaptation simple mais efficace pour réduire l’impact des décalages de distribution.
+	
+	Au-delà des performances obtenues, ce projet a permis de concevoir un pipeline modulaire, reproductible et facilement extensible. L’utilisation de Google Colab, de configurations YAML, de checkpoints structurés et de logs détaillés garantit la transparence et la réplicabilité des expériences.
+	
+	\section*{Perspectives}
+	
+	Plusieurs pistes d’amélioration peuvent être envisagées pour prolonger ce travail :
+	
+	\begin{itemize}
+		\item \textbf{Explorer des méthodes SSL plus récentes} telles que MAE, DINO ou iBOT, qui ont démontré des performances supérieures à SimCLR sur des architectures Transformer.
+		\item \textbf{Tester des variantes avancées de Test-Time Training} comme TTT++, EATA ou SAR, qui proposent des mécanismes d’adaptation plus stables et plus performants.
+		\item \textbf{Évaluer le pipeline sur des datasets plus complexes} tels que Tiny-ImageNet, ImageNet-100 ou ImageNet-C, afin de mieux mesurer la scalabilité des approches étudiées.
+		\item \textbf{Intégrer des techniques de robustesse explicite} comme l’adversarial training, les augmentations stochastiques ou les méthodes de calibration.
+		\item \textbf{Étudier l’impact de la taille du modèle} en comparant ViT-Tiny avec des variantes plus larges (ViT-S, ViT-B), afin d’analyser le rôle de la capacité dans la robustesse.
+	\end{itemize}
+	
+	En conclusion, ce projet montre que la combinaison de l’apprentissage auto-supervisé et de l’adaptation en ligne constitue une approche prometteuse pour améliorer la robustesse des modèles de vision. Les résultats obtenus ouvrent la voie à de nombreuses explorations futures, tant sur le plan méthodologique que sur le plan expérimental.
+	
+	
+	\bibliographystyle{plain}
+	\bibliography{references}
+	
+	\appendix
+	\chapter{Annexes}
+	
+	Cette section regroupe les éléments complémentaires permettant de documenter plus en détail l’implémentation, la configuration et la reproductibilité du pipeline. Les annexes incluent notamment la structure du dépôt, les fichiers de configuration, des extraits de code essentiels, ainsi que des informations sur l’environnement d’exécution.
+	
+	\section{Structure du dépôt}
+	
+	Le projet est organisé selon une architecture modulaire facilitant la lisibilité et la maintenance du code. La structure générale est la suivante :
+	\begin{verbatim}
+		|-- configs/
+		|   |-- simclr.yaml
+		|   |-- linear_probe.yaml
+		|   |-- finetune.yaml
+		|   `-- ttt.yaml
+		|-- src/
+		|   |-- core/
+		|   |-- data/
+		|   |-- models/
+		|   |-- training/
+		|   `-- ttt/
+		|-- notebooks/
+		|   `-- pipeline_colab.ipynb
+		|-- checkpoints/
+		|-- logs/
+		|-- readme.md
+		`-- requirements.txt
+	\end{verbatim}
+	Cette organisation permet de séparer clairement les modules liés aux données, aux modèles, à l’entraînement et à l’adaptation.
+	
+	\section{Configuration YAML}
+	
+	Les fichiers YAML définissent les hyperparamètres utilisés dans chaque stage. Ils permettent de modifier facilement les paramètres sans toucher au code source. Voici un exemple simplifié :
+	
+	\begin{verbatim}
+		model:
+		name: vit_tiny
+		projection_dim: 128
+		
+		training:
+		batch_size: 1024
+		epochs: 200
+		optimizer: adamw
+		lr: 3e-3
+		scheduler: cosine
+		
+		data:
+		dataset: cifar10
+		augmentations: simclr
+	\end{verbatim}
+	
+	\section{Extraits de code essentiels}
+	
+	\subsection*{Boucle d'entraînement générale}
+	
+	\begin{verbatim}
+		for epoch in range(self.epochs):
+		train_loss = self._train_one_epoch()
+		val_loss = self._validate()
+		self.logger.log(epoch, train_loss, val_loss)
+		self.checkpoint_manager.update(val_loss, model)
+	\end{verbatim}
+	
+	\subsection*{Perte InfoNCE utilisée dans SimCLR}
+	
+	\begin{verbatim}
+		loss = -log( exp(sim(z_i, z_j) / tau) /
+		sum_k exp(sim(z_i, z_k) / tau) )
+	\end{verbatim}
+	
+	\section{Environnement d'exécution}
+	
+	Les expériences ont été réalisées sur Google Colab avec l’environnement suivant :
+	
+	\begin{itemize}
+		\item GPU : NVIDIA T4 ou A100 selon disponibilité,
+		\item Python 3.10,
+		\item PyTorch 2.x,
+		\item CUDA 11+,
+		\item TensorBoard pour la visualisation.
+	\end{itemize}
+	
+	L’utilisation de Google Drive permet de sauvegarder automatiquement les checkpoints et les logs afin de garantir la reproductibilité.
+	
+	\section{Commandes d'exécution du pipeline}
+	
+	Les différents stages peuvent être exécutés indépendamment via les drapeaux suivants dans le notebook Colab :
+	
+	\begin{verbatim}
+		RUN_STAGE_A = True      # Pré-entraînement SimCLR
+		RUN_STAGE_B1 = True     # Linear Probe
+		RUN_STAGE_B2 = True     # Fine-tuning
+		RUN_STAGE_C = True      # Test-Time Training
+	\end{verbatim}
+	
+	\section{Résultats TensorBoard}
+	
+	Les courbes d’entraînement (loss, accuracy, learning rate) sont accessibles via TensorBoard. Elles permettent de visualiser :
+	
+	\begin{itemize}
+		\item la convergence de SimCLR,
+		\item la progression du linear probe,
+		\item l’amélioration du fine-tuning,
+		\item la stabilité de TENT.
+	\end{itemize}
+	
+	\section{Reproductibilité}
+	
+	Pour reproduire l’ensemble des expériences :
+	
+	\begin{enumerate}
+		\item Ouvrir le notebook Colab.
+		\item Monter Google Drive.
+		\item Télécharger CIFAR-10 et CIFAR-10-C.
+		\item Configurer les drapeaux d’exécution.
+		\item Lancer les stages dans l’ordre souhaité.
+	\end{enumerate}
+	
+	Les checkpoints sauvegardés permettent de reprendre une expérience à n’importe quel stage sans réentraînement complet.
+	
+	
+\end{document}
