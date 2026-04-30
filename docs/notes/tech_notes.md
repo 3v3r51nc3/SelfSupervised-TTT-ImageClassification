@@ -17,8 +17,19 @@ backbone for this TER, so we are not benchmarking against ResNet despite
 the TTT literature being CNN-dominated (Sun 2020 uses ResNet-26). ViT-Tiny
 is the smallest variant and the only one that fits the CIFAR-10 / Colab L4
 budget without overfitting or training too slowly — Small and Base were
-ruled out on those grounds. Patch size 4 is the standard CIFAR-10 ViT
-choice (8×8 grid = 64 tokens for a 32×32 image).
+ruled out on those grounds.
+
+**Patch size — 4.** The default ViT patch size of 16 is calibrated for
+224×224 ImageNet images. Applied to 32×32 CIFAR-10 it would produce a
+2×2 = 4-token sequence, which strips the Transformer of the spatial
+context it needs (self-attention over four tokens is barely better than a
+linear classifier). Halving to patch=8 still gives only 16 tokens and
+empirically hurts CIFAR-10 accuracy. Patch=4 yields an 8×8 = 64-token
+sequence, the same effective spatial resolution as a CNN's last feature
+map, and is the consistent choice in the CIFAR-10 ViT literature
+(e.g. Lee et al., "Vision Transformer for Small-Size Datasets", 2021).
+Patch=2 (256 tokens) was ruled out on cost — attention is quadratic in
+sequence length.
 
 ---
 
