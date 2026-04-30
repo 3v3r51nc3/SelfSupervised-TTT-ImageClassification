@@ -12,8 +12,13 @@ For CIFAR-10 (32×32 images) with patch_size=4:
 - a standard Transformer encoder then processes the sequence
 - the output is a single 192-dim vector = the image embedding
 
-We use ViT-Tiny (smallest variant) because CIFAR-10 is small and we don't have
-a lot of compute. Larger variants (Small, Base) would overfit or train too slowly.
+**Backbone choice — ViT-Tiny.** The supervisor (A. Karine) specified a ViT
+backbone for this TER, so we are not benchmarking against ResNet despite
+the TTT literature being CNN-dominated (Sun 2020 uses ResNet-26). ViT-Tiny
+is the smallest variant and the only one that fits the CIFAR-10 / Colab L4
+budget without overfitting or training too slowly — Small and Base were
+ruled out on those grounds. Patch size 4 is the standard CIFAR-10 ViT
+choice (8×8 grid = 64 tokens for a 32×32 image).
 
 ---
 
