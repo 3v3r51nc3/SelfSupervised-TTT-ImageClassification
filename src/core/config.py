@@ -85,6 +85,9 @@ class TTTConfig:
     method: str = "sun2020"
     lambda_rot: float = 1.0
     rotation_mode: str = "rand"
+    eval_mode: str = "per_batch"
+    per_image_aug_k: int = 128
+    per_image_subsample: int = 1000
 
 
 @dataclass(frozen=True)
@@ -174,3 +177,9 @@ class ConfigLoader:
             raise ValueError("ttt.rotation_mode must be 'rand' or 'expand'.")
         if config.ttt.lambda_rot < 0:
             raise ValueError("ttt.lambda_rot must be non-negative.")
+        if config.ttt.enabled and config.ttt.eval_mode not in {"per_batch", "per_image", "both"}:
+            raise ValueError("ttt.eval_mode must be 'per_batch', 'per_image', or 'both'.")
+        if config.ttt.per_image_aug_k < 1:
+            raise ValueError("ttt.per_image_aug_k must be >= 1.")
+        if config.ttt.per_image_subsample < 1:
+            raise ValueError("ttt.per_image_subsample must be >= 1.")
