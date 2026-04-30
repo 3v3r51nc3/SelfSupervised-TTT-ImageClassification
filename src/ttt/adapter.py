@@ -1,23 +1,21 @@
 """
 Sun 2020 TTT adapter (rotation auxiliary).
 
-For each (corruption, severity) cell the pipeline calls `reset()` once;
-then for each test batch it calls `adapt_and_predict(images)` which:
+Two adaptation modes:
 
-1. snapshots model + optimizer state if not already snapshotted,
-2. for `steps` iterations:
-     rotated, rot_labels = rotate_batch(images, rotation_mode)
-     rot_logits = model.forward_rotation(rotated)
-     loss       = CE(rot_logits, rot_labels)
-     loss.backward(); optimizer.step()
-3. with no_grad: returns model(images) classification logits.
+- `adapt_and_predict(images)` — per-batch. One SGD step on the rotation
+  loss for the whole batch, then classify. Used as the operational
+  baseline.
+- `adapt_and_predict_per_image(image, k)` — per-image. Replicate one
+  image K times, draw K random rotations, one SGD step on the K-batch,
+  then classify the original image. Matches TER2.pdf "individuellement
+  à chaque image".
 
-`reset()` restores the snapshotted state so adaptation never bleeds across
-cells.
+For each (corruption, severity) the pipeline must call `reset()` to
+restore the snapshotted clean weights so adaptation never bleeds across
+cells; for per-image the caller resets between every image.
 
-Adapted from `yueatsprograms/ttt_cifar_release/test_calls/test_adapt.py`
-(per-image adapt_single loop) — generalized to per-batch since CIFAR-10-C
-evaluation here is batched.
+Adapted from `yueatsprograms/ttt_cifar_release/test_calls/test_adapt.py`.
 """
 
 from __future__ import annotations

@@ -96,24 +96,28 @@ Standard models are trained once and then frozen during inference.
 The problem: if test data looks different from training data (different lighting,
 noise, corruption), accuracy drops significantly.
 
-TTT fixes this by doing a few gradient steps on each test image before predicting:
-1. Take a test image (no label available)
-2. Apply a self-supervised objective (e.g. SimCLR loss on two augmented views)
-3. Update a small part of the model (only normalization layers = norm_only)
-4. Predict the class with the updated model
-5. Reset weights for the next image
+TTT fixes this by doing a few gradient steps on the test stream before
+predicting, using a **self-supervised** objective so no test labels are
+needed:
 
-This way the model adapts locally to each test sample without needing labels.
+1. Take a test sample (or batch). No labels.
+2. Apply an SSL objective for which a synthetic label can be generated
+   from the input itself.
+3. Take a small number of SGD steps on a subset of the model.
+4. Predict the class with the updated model.
+5. Reset model weights so adaptation does not bleed across cells.
 
-**Why norm_only?**
-LayerNorm layers (γ, β parameters) control the scale and shift of activations.
-They are sensitive to distribution shift and quick to adapt.
-Updating only them is fast and avoids destroying the learned representations.
+The concrete instantiation used in this project is **Sun 2020 TTT
+(rotation auxiliary head)** — the SSL objective is "predict by what
+angle (0/90/180/270°) this input was rotated", and the small subset of
+the model that gets adapted is `encoder + rotation_head` while the
+classifier head stays frozen. Full details: see the *Sun 2020 TTT*
+section below.
 
-For the TER objective, TTT must be evaluated **without access to test labels**
-and compared against the same model **without TTT**. The key question is not
-just whether the model predicts well, but whether this test-time adaptation
-actually helps under distribution shift.
+For the TER objective, TTT must be evaluated **without access to test
+labels** and compared against the same model **without TTT**. The key
+question is not just whether the model predicts well, but whether this
+test-time adaptation actually helps under distribution shift.
 
 ---
 
@@ -127,8 +131,8 @@ Split used in this project:
 - 5 000 validation (hyperparameter tuning)
 - 10 000 test (final evaluation)
 
-CIFAR-10-C is the same test set but with 19 types of corruption
-(noise, blur, weather effects) at 5 severity levels. In this project it is not
+CIFAR-10-C is the same test set but with 14 types of corruption
+(four families: noise, blur, weather, digital) at 5 severity levels. In this project it is not
 just a side benchmark: it is the main way to evaluate how much TTT helps under
 distribution shift, because the assignment focuses on adaptation to shifted test
 conditions.
@@ -279,7 +283,10 @@ so the numbers stay directly comparable to a plain fine-tune baseline.
 
 ### Stage C — adapter (`src/ttt/adapter.py::TestTimeAdapter`)
 
-For each test batch (`adapt_and_predict(images)`):
+The adapter exposes two adaptation modes that share the same
+snapshot/reset machinery and the same SGD optimizer over `encoder + rotation_head`.
+
+**Per-batch (`adapt_and_predict(images)`)** — operational baseline.
 
 1. Set `model.train()` everywhere except `model.classifier`, which goes
    to `eval()` and has `requires_grad=False`. The supervised head must
@@ -291,10 +298,21 @@ For each test batch (`adapt_and_predict(images)`):
    - `optimizer.zero_grad(); loss.backward(); optimizer.step()`
 3. With `no_grad`, return `model(images)` classification logits.
 
+**Per-image (`adapt_and_predict_per_image(image, k)`)** — TER-strict.
+
+1. Replicate the single test image into a batch of `k` copies
+   (`per_image_aug_k`, default 128 — Sun 2020 default).
+2. Apply `mode="rand"` rotations across the K-batch and run `steps`
+   SGD steps exactly as above.
+3. Forward the original (un-rotated) image through `classifier` under
+   `no_grad`; argmax.
+4. The caller must `reset()` between images so adaptation never leaks
+   across samples.
+
 The optimizer is **SGD** over `encoder.parameters() + rotation_head.parameters()`
 with `lr = 1e-3` (Sun 2020 default). `rotation_mode` is `"rand"` for
-per-batch random labels (default) or `"expand"` for the per-image
-ablation that quadruples the input with all four fixed rotation labels.
+random per-sample labels (default) or `"expand"` for the variant that
+quadruples the input with all four fixed rotation labels.
 
 ### Snapshot / reset semantics
 
@@ -312,12 +330,42 @@ The pipeline builds the adapter exactly **once** before the corruption
 loop. If we built a new adapter per corruption, each new snapshot would
 capture weights that had already been mutated by the previous one.
 
+### Per-batch vs per-image — wall-clock & TER strategy
+
+The choice of mode is purely a Stage C concern (training is identical).
+On A100/L4 at the Sun 2020 default of K=128 augmented copies + 1 SGD
+step per image, the cost is:
+
+| Mode | Per-image cost | Cells | Wall-clock (L4) |
+|---|---|---|---|
+| per-batch (full 10 000 / cell) | ~1 ms | 71 | ~5 min |
+| per-image (full 10 000 / cell)  | ~100 ms | 71 | ~20 h — prohibitive |
+| per-image (subsample 1 000 / cell) | ~100 ms | 71 | ~2 h — acceptable |
+
+The TER assignment ("adapté **individuellement à chaque image** de
+test") asks for per-image. To keep the pipeline runnable in one
+overnight Colab session **and** report the TER-faithful headline, the
+project runs both modes in the same Stage C session and dumps both
+into the same CSV:
+
+1. **per-batch** on the full 10 000-image test set per cell — fast
+   ablation baseline.
+2. **per-image** on a stratified random subsample of `per_image_subsample`
+   images per cell (default 1 000, fixed seed) — TER-strict headline.
+   At n = 1 000 the 95% Wilson CI for accuracy is approximately ±1.0 pp,
+   below the granularity of the comparisons drawn in the report.
+
+Both modes use the identical adapter — same K=128 augmentation count,
+same SGD optimizer, same snapshot/reset protocol — so the only thing
+that varies between rows in the CSV is whether the SGD step adapted on
+one batch of distinct test inputs (per-batch) or on K copies of one
+test input (per-image).
+
 ### Reference
 
 Adapted from `yueatsprograms/ttt_cifar_release` —
 `utils/rotation.py` (the rotation utilities) and
-`test_calls/test_adapt.py::adapt_single` (the per-image adapt loop,
-generalized here to per-batch).
+`test_calls/test_adapt.py::adapt_single` (the per-image adapt loop).
 
 ---
 
@@ -373,12 +421,15 @@ The pipeline (`src/core/pipeline.py`) runs four stages in strict order:
    - Reports clean test accuracy as the *main downstream result*.
 
 4. **Stage C — Robustness + TTT evaluation**
-   - Inputs: `finetune_best.pt`, all 19 corruptions × 5 severities of
+   - Inputs: `finetune_best.pt`, all 14 corruptions × 5 severities of
      CIFAR-10-C, plus the clean test set.
-   - For each (corruption, severity) computes both **baseline** (no
-     adaptation) and **TTT** (Sun 2020 TTT, rotation auxiliary, K=1)
-     accuracy / loss.
-   - Output artifact: `logs/<exp>/cifar10c_results.csv`.
+   - For each (corruption, severity) computes **baseline** (no
+     adaptation) and, when `ttt.enabled` and the corresponding
+     `eval_mode` flag is on, **per-batch TTT** on the full set and/or
+     **per-image TTT** on a stratified subsample of size
+     `per_image_subsample` (Sun 2020 TTT, rotation auxiliary, K=1).
+   - Output artifact: `logs/<exp>/cifar10c_results.csv` (long format —
+     one row per (corruption, severity, ttt_mode)).
 
 `CheckpointManager.reset_best()` is called at the start of every training
 stage so that "best metric" tracking from Stage A doesn't bleed into
@@ -388,22 +439,25 @@ Stage B.1, etc.
 
 ## Stage C CSV Schema
 
-`logs/<exp>/cifar10c_results.csv` is the main reporting artifact. Columns:
+`logs/<exp>/cifar10c_results.csv` is the main reporting artifact. The
+schema is **long** (one row per (corruption, severity, ttt_mode)) so
+that per-batch and per-image numbers coexist in a single dataframe
+without exploding the column count.
 
 | column | meaning |
 |---|---|
 | `corruption` | corruption name (e.g. `gaussian_noise`, or `clean`) |
 | `severity` | 1–5, or `0` for the `clean` row |
-| `baseline_accuracy` | top-1 accuracy of fine-tuned model on this set |
-| `baseline_loss` | cross-entropy on this set |
-| `ttt_accuracy` | top-1 accuracy after Sun 2020 TTT adaptation (rotation auxiliary, per-batch) |
-| `ttt_loss` | cross-entropy after adaptation |
-| `delta_accuracy` | `ttt_accuracy - baseline_accuracy` (positive = TTT helped) |
+| `ttt_mode` | `baseline` (no adaptation), `per_batch` (Sun 2020 TTT, full set) or `per_image` (Sun 2020 TTT, subsample of `n_samples`) |
+| `n_samples` | number of test images that contributed to the row (full 10 000 for `baseline` and `per_batch`, `per_image_subsample` for `per_image`) |
+| `accuracy` | top-1 accuracy on those `n_samples` images |
+| `loss` | cross-entropy on those `n_samples` images |
+| `delta_accuracy` | `accuracy - baseline_accuracy` for the same (corruption, severity); `0` for the `baseline` row itself |
 
-There is one row per (corruption, severity) plus a single `clean` row at
-severity 0 — clean numbers anchor the rest. The "TTT helps when?" question
-is answered by inspecting `delta_accuracy` aggregated by corruption type
-and severity.
+There are up to three rows per (corruption, severity) plus the same
+three for `clean` at severity 0 — clean numbers anchor the rest. The
+"TTT helps when?" question is answered by pivoting on `ttt_mode` and
+inspecting `delta_accuracy` per corruption.
 
 ---
 
@@ -564,11 +618,13 @@ Papers and codebases the project builds on.
   "Random Erasing Data Augmentation." *AAAI 2020.*
   [arXiv:1708.04896](https://arxiv.org/abs/1708.04896)
 
-### Normalization layers (relevant to `adapt_scope: norm_only`)
+### Normalization layers (background)
 
 - **LayerNorm** — Ba, J. L., Kiros, J. R., Hinton, G. E. "Layer
   Normalization." 2016.
-  [arXiv:1607.06450](https://arxiv.org/abs/1607.06450)
+  [arXiv:1607.06450](https://arxiv.org/abs/1607.06450).
+  ViT uses LayerNorm; the encoder being adapted at test time inherits
+  these layers.
 - **BatchNorm** — Ioffe, S., Szegedy, C. "Batch Normalization:
   Accelerating Deep Network Training by Reducing Internal Covariate
   Shift." *ICML 2015.*
