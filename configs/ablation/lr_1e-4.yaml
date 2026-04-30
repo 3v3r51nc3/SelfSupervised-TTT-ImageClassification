@@ -1,0 +1,74 @@
+# Ablation: ttt.learning_rate 1e-3 -> 1e-4 (10x smaller).
+# Tests hypothesis that per_image regime over-adapts at default lr=1e-3.
+# Note: lr also affects per_batch — schema currently has no per_image-specific lr.
+# Prereq before running:
+#   cp -r checkpoints/simclr-vit-cifar10-ter checkpoints/ablation-lr-1e-4
+# Stages A/B.1/B.2 will auto-skip if checkpoints are schema-compatible.
+
+experiment:
+  name: "ablation-lr-1e-4"
+  seed: 42
+
+data:
+  dataset: "cifar10"
+  data_root: "./data"
+  image_size: 32
+  num_workers: 4
+  batch_size_ssl: 1024
+  batch_size_sup: 256
+  val_fraction: 0.1
+  augment_supervised: true
+  randaugment_n: 2
+  randaugment_m: 9
+
+model:
+  backbone: "vit_tiny"
+  patch_size: 4
+  embed_dim: 192
+  projection_dim: 128
+  drop_path_rate: 0.1
+
+simclr:
+  epochs: 200
+  temperature: 0.2
+  learning_rate: 0.003
+  weight_decay: 1.0e-4
+  warmup_epochs: 10
+  use_amp: true
+  log_every_n_steps: 20
+
+linear_probe:
+  epochs: 30
+  learning_rate: 0.001
+  weight_decay: 0.0
+  warmup_epochs: 0
+  use_amp: true
+
+finetune:
+  epochs: 30
+  learning_rate: 5.0e-4
+  weight_decay: 0.05
+  warmup_epochs: 3
+  label_smoothing: 0.1
+  use_amp: true
+  early_stopping_patience: 10
+
+ttt:
+  enabled: true
+  method: "sun2020"
+  steps: 1
+  learning_rate: 1.0e-4   # ABLATION: was 1e-3
+  adapt_scope: "encoder_plus_head"
+  lambda_rot: 1.0
+  rotation_mode: "rand"
+  eval_mode: "both"
+  per_image_aug_k: 128
+  per_image_subsample: 1000
+
+logging:
+  use_wandb: false
+  log_dir: "./logs"
+
+checkpoint:
+  dir: "./checkpoints"
+  save_best_only: true
