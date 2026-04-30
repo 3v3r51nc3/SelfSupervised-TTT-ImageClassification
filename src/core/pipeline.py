@@ -329,98 +329,152 @@ class ExperimentPipeline:
 
     def run_stage_c(
         self, model: TTTModel, data_module: CIFARDataModule
-    ) -> dict[str, dict[int, dict[str, float]]]:
+    ) -> dict[str, dict[int, list[dict[str, object]]]]:
+        """
+        Long-format Stage C: emits one row per (corruption, severity, ttt_mode).
+
+        ttt_mode values:
+        - "baseline" — no adaptation, full cell (n_samples=10000)
+        - "per_batch" — Sun 2020 per-batch TTT, full cell (n_samples=10000)
+        - "per_image" — Sun 2020 per-image TTT, stratified subsample
+          (n_samples=ttt.per_image_subsample). Per-image on the full 10k
+          cell would cost ~20h L4 per cell.
+
+        Per-image delta_accuracy is computed against a matching subsample
+        baseline (same indices) so the comparison is apples-to-apples.
+        """
         self.logger.info("Starting Stage C: CIFAR-10-C evaluation (baseline + TTT)")
 
         evaluator = Evaluator(model=model, device=self.device, num_classes=CIFAR10_NUM_CLASSES)
         ttt_enabled = self.config.ttt.enabled
+        eval_mode = self.config.ttt.eval_mode if ttt_enabled else "per_batch"
+        do_per_batch = ttt_enabled and eval_mode in {"per_batch", "both"}
+        do_per_image = ttt_enabled and eval_mode in {"per_image", "both"}
+
+        seed = self.config.experiment.seed
+        sub_n = self.config.ttt.per_image_subsample
+        aug_k = self.config.ttt.per_image_aug_k
 
         # Build the adapter once so its snapshot captures the clean fine-tuned weights.
         # `reset()` restores those weights before each new (corruption, severity) eval.
         adapter = self._make_ttt_adapter(model) if ttt_enabled else None
 
+        rows: list[dict[str, object]] = []
+        per_class_rows: list[dict[str, object]] = []
+        results: dict[str, dict[int, list[dict[str, object]]]] = {}
+
+        # Clean test
         clean_loader = data_module.test_loader()
+        clean_n = len(clean_loader.dataset)
         clean_baseline = evaluator.evaluate(clean_loader)
         self.logger.info(
-            "Clean test - acc=%.4f loss=%.4f",
+            "Clean test baseline - acc=%.4f loss=%.4f",
             clean_baseline["accuracy"],
             clean_baseline["loss"],
         )
+        rows.append(self._stage_c_row("clean", 0, "baseline", clean_n, clean_baseline, delta=None))
+        per_class_rows.append(self._per_class_row("clean", 0, "baseline", clean_n, clean_baseline))
+        results["clean"] = {0: [rows[-1]]}
 
-        clean_ttt: dict[str, object] | None = None
-        if adapter is not None:
-            clean_ttt = evaluator.evaluate_with_ttt(clean_loader, adapter)
+        if do_per_batch:
+            adapter.reset()
+            clean_pb = evaluator.evaluate_with_ttt(clean_loader, adapter)
             self.logger.info(
-                "Clean test (TTT) - acc=%.4f loss=%.4f delta=%+.4f",
-                clean_ttt["accuracy"],
-                clean_ttt["loss"],
-                clean_ttt["accuracy"] - clean_baseline["accuracy"],
+                "Clean test (per_batch) - acc=%.4f loss=%.4f Δ=%+.4f",
+                clean_pb["accuracy"], clean_pb["loss"],
+                clean_pb["accuracy"] - clean_baseline["accuracy"],
             )
+            row = self._stage_c_row(
+                "clean", 0, "per_batch", clean_n, clean_pb,
+                delta=clean_pb["accuracy"] - clean_baseline["accuracy"],
+            )
+            rows.append(row)
+            per_class_rows.append(self._per_class_row("clean", 0, "per_batch", clean_n, clean_pb))
+            results["clean"][0].append(row)
 
-        results: dict[str, dict[int, dict[str, float]]] = {
-            "clean": {0: {**{f"baseline_{k}": v for k, v in clean_baseline.items() if k != "per_class_accuracy"},
-                          **({f"ttt_{k}": v for k, v in clean_ttt.items() if k != "per_class_accuracy"} if clean_ttt else {})}},
-        }
+        if do_per_image:
+            clean_sub_loader = data_module.test_loader_subsample(sub_n, seed)
+            sub_baseline = evaluator.evaluate(clean_sub_loader)
+            adapter.reset()
+            clean_pi = evaluator.evaluate_per_image_with_ttt(clean_sub_loader, adapter, k=aug_k)
+            self.logger.info(
+                "Clean test (per_image, n=%d, k=%d) - acc=%.4f loss=%.4f Δ=%+.4f",
+                sub_n, aug_k, clean_pi["accuracy"], clean_pi["loss"],
+                clean_pi["accuracy"] - sub_baseline["accuracy"],
+            )
+            row = self._stage_c_row(
+                "clean", 0, "per_image", sub_n, clean_pi,
+                delta=clean_pi["accuracy"] - sub_baseline["accuracy"],
+            )
+            rows.append(row)
+            per_class_rows.append(self._per_class_row("clean", 0, "per_image", sub_n, clean_pi))
+            results["clean"][0].append(row)
 
-        per_class_rows: list[dict[str, object]] = []
-        per_class_rows.append(self._per_class_row("clean", 0, "baseline", clean_baseline))
-        if clean_ttt is not None:
-            per_class_rows.append(self._per_class_row("clean", 0, "ttt", clean_ttt))
-
-        rows: list[dict[str, object]] = []
         for corruption in CIFARDataModule.cifar10c_corruptions():
             results[corruption] = {}
             for severity in range(1, 6):
+                cell_rows: list[dict[str, object]] = []
                 loader = data_module.cifar10c_loader(corruption, severity)
+                cell_n = len(loader.dataset)
 
-                if adapter is not None:
-                    adapter.reset()
                 baseline = evaluator.evaluate(loader)
-                row: dict[str, object] = {
-                    "corruption": corruption,
-                    "severity": severity,
-                    "baseline_accuracy": baseline["accuracy"],
-                    "baseline_loss": baseline["loss"],
-                }
-                per_class_rows.append(self._per_class_row(corruption, severity, "baseline", baseline))
+                base_row = self._stage_c_row(
+                    corruption, severity, "baseline", cell_n, baseline, delta=None,
+                )
+                rows.append(base_row)
+                cell_rows.append(base_row)
+                per_class_rows.append(
+                    self._per_class_row(corruption, severity, "baseline", cell_n, baseline)
+                )
 
-                if adapter is not None:
-                    ttt_metrics = evaluator.evaluate_with_ttt(loader, adapter)
-                    row["ttt_accuracy"] = ttt_metrics["accuracy"]
-                    row["ttt_loss"] = ttt_metrics["loss"]
-                    row["delta_accuracy"] = ttt_metrics["accuracy"] - baseline["accuracy"]
+                if do_per_batch:
+                    adapter.reset()
+                    ttt_pb = evaluator.evaluate_with_ttt(loader, adapter)
+                    delta = ttt_pb["accuracy"] - baseline["accuracy"]
                     self.logger.info(
-                        "CIFAR-10-C %s sev=%d - base_acc=%.4f ttt_acc=%.4f Δ=%+.4f",
-                        corruption,
-                        severity,
-                        baseline["accuracy"],
-                        ttt_metrics["accuracy"],
-                        row["delta_accuracy"],
+                        "CIFAR-10-C %s sev=%d (per_batch) - base=%.4f ttt=%.4f Δ=%+.4f",
+                        corruption, severity, baseline["accuracy"], ttt_pb["accuracy"], delta,
                     )
-                    results[corruption][severity] = {
-                        "baseline_accuracy": baseline["accuracy"],
-                        "baseline_loss": baseline["loss"],
-                        "ttt_accuracy": ttt_metrics["accuracy"],
-                        "ttt_loss": ttt_metrics["loss"],
-                        "delta_accuracy": row["delta_accuracy"],
-                    }
-                    per_class_rows.append(self._per_class_row(corruption, severity, "ttt", ttt_metrics))
-                else:
+                    row = self._stage_c_row(
+                        corruption, severity, "per_batch", cell_n, ttt_pb, delta=delta,
+                    )
+                    rows.append(row)
+                    cell_rows.append(row)
+                    per_class_rows.append(
+                        self._per_class_row(corruption, severity, "per_batch", cell_n, ttt_pb)
+                    )
+
+                if do_per_image:
+                    sub_loader = data_module.cifar10c_loader_subsample(
+                        corruption, severity, sub_n, seed,
+                    )
+                    sub_baseline = evaluator.evaluate(sub_loader)
+                    adapter.reset()
+                    ttt_pi = evaluator.evaluate_per_image_with_ttt(sub_loader, adapter, k=aug_k)
+                    delta = ttt_pi["accuracy"] - sub_baseline["accuracy"]
+                    self.logger.info(
+                        "CIFAR-10-C %s sev=%d (per_image, n=%d, k=%d) - sub_base=%.4f ttt=%.4f Δ=%+.4f",
+                        corruption, severity, sub_n, aug_k,
+                        sub_baseline["accuracy"], ttt_pi["accuracy"], delta,
+                    )
+                    row = self._stage_c_row(
+                        corruption, severity, "per_image", sub_n, ttt_pi, delta=delta,
+                    )
+                    rows.append(row)
+                    cell_rows.append(row)
+                    per_class_rows.append(
+                        self._per_class_row(corruption, severity, "per_image", sub_n, ttt_pi)
+                    )
+
+                if not (do_per_batch or do_per_image):
                     self.logger.info(
                         "CIFAR-10-C %s sev=%d - acc=%.4f loss=%.4f",
-                        corruption,
-                        severity,
-                        baseline["accuracy"],
-                        baseline["loss"],
+                        corruption, severity, baseline["accuracy"], baseline["loss"],
                     )
-                    results[corruption][severity] = {
-                        "baseline_accuracy": baseline["accuracy"],
-                        "baseline_loss": baseline["loss"],
-                    }
 
-                rows.append(row)
+                results[corruption][severity] = cell_rows
 
-        self._dump_stage_c_csv(rows, clean_baseline, clean_ttt)
+        self._dump_stage_c_csv(rows)
         self._dump_stage_c_per_class_csv(per_class_rows)
         self.logger.info("Completed Stage C: CIFAR-10-C evaluation")
         return results
@@ -439,48 +493,57 @@ class ExperimentPipeline:
             rotation_mode=self.config.ttt.rotation_mode,
         )
 
-    def _dump_stage_c_csv(
-        self,
-        rows: list[dict[str, object]],
-        clean_baseline: dict[str, object],
-        clean_ttt: dict[str, object] | None,
-    ) -> None:
+    def _dump_stage_c_csv(self, rows: list[dict[str, object]]) -> None:
         log_dir = Path(self.config.logging.log_dir) / self.config.experiment.name
         log_dir.mkdir(parents=True, exist_ok=True)
         out_path = log_dir / "cifar10c_results.csv"
 
         fieldnames = [
-            "corruption", "severity",
-            "baseline_accuracy", "baseline_loss",
-            "ttt_accuracy", "ttt_loss", "delta_accuracy",
+            "corruption", "severity", "ttt_mode", "n_samples",
+            "accuracy", "loss", "delta_accuracy",
         ]
         with out_path.open("w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
-            clean_row = {
-                "corruption": "clean",
-                "severity": 0,
-                "baseline_accuracy": clean_baseline["accuracy"],
-                "baseline_loss": clean_baseline["loss"],
-            }
-            if clean_ttt is not None:
-                clean_row["ttt_accuracy"] = clean_ttt["accuracy"]
-                clean_row["ttt_loss"] = clean_ttt["loss"]
-                clean_row["delta_accuracy"] = clean_ttt["accuracy"] - clean_baseline["accuracy"]
-            writer.writerow(clean_row)
             for row in rows:
                 writer.writerow(row)
         self.logger.info("Stage C report saved to %s", out_path)
 
     @staticmethod
+    def _stage_c_row(
+        corruption: str,
+        severity: int,
+        ttt_mode: str,
+        n_samples: int,
+        metrics: dict[str, object],
+        delta: float | None,
+    ) -> dict[str, object]:
+        row: dict[str, object] = {
+            "corruption": corruption,
+            "severity": severity,
+            "ttt_mode": ttt_mode,
+            "n_samples": n_samples,
+            "accuracy": metrics["accuracy"],
+            "loss": metrics["loss"],
+        }
+        if delta is not None:
+            row["delta_accuracy"] = delta
+        return row
+
+    @staticmethod
     def _per_class_row(
-        corruption: str, severity: int, branch: str, metrics: dict[str, object]
+        corruption: str,
+        severity: int,
+        ttt_mode: str,
+        n_samples: int,
+        metrics: dict[str, object],
     ) -> dict[str, object]:
         per_class = metrics["per_class_accuracy"]
         row: dict[str, object] = {
             "corruption": corruption,
             "severity": severity,
-            "branch": branch,
+            "ttt_mode": ttt_mode,
+            "n_samples": n_samples,
         }
         for cls_idx, acc in enumerate(per_class):
             row[f"class_{cls_idx}"] = acc
@@ -491,7 +554,7 @@ class ExperimentPipeline:
         log_dir.mkdir(parents=True, exist_ok=True)
         out_path = log_dir / "cifar10c_per_class.csv"
 
-        fieldnames = ["corruption", "severity", "branch"] + [
+        fieldnames = ["corruption", "severity", "ttt_mode", "n_samples"] + [
             f"class_{i}" for i in range(CIFAR10_NUM_CLASSES)
         ]
         with out_path.open("w", newline="") as f:
