@@ -18,6 +18,7 @@ from src.evaluation.metrics import per_class_accuracy
 
 class TTTAdapter(Protocol):
     def adapt_and_predict(self, images: torch.Tensor) -> torch.Tensor: ...
+    def adapt_and_predict_per_image(self, image: torch.Tensor, k: int) -> torch.Tensor: ...
     def reset(self) -> None: ...
 
 
@@ -53,6 +54,52 @@ class Evaluator:
 
                 all_preds.append(preds.detach().cpu())
                 all_targets.append(targets.detach().cpu())
+
+        preds_cat = torch.cat(all_preds)
+        targets_cat = torch.cat(all_targets)
+
+        return {
+            "loss": total_loss / total_samples,
+            "accuracy": total_correct / total_samples,
+            "per_class_accuracy": per_class_accuracy(preds_cat, targets_cat, self.num_classes),
+        }
+
+    def evaluate_per_image_with_ttt(
+        self,
+        loader: DataLoader,
+        ttt_adapter: TTTAdapter,
+        k: int,
+    ) -> dict[str, object]:
+        """
+        Sun 2020 per-image TTT: reset the adapter before each image, run K
+        replicated rotation steps on that image alone, then classify it.
+
+        Caller is responsible for passing a subsampled loader — per-image
+        adaptation on the full 10k cell is wall-clock prohibitive.
+        """
+        total_loss = 0.0
+        total_correct = 0
+        total_samples = 0
+        all_preds: list[torch.Tensor] = []
+        all_targets: list[torch.Tensor] = []
+
+        for images, targets in loader:
+            images = images.to(self.device, non_blocking=True)
+            targets = targets.to(self.device, non_blocking=True)
+
+            for i in range(images.size(0)):
+                ttt_adapter.reset()
+                logits = ttt_adapter.adapt_and_predict_per_image(images[i], k)
+                target = targets[i:i + 1]
+                loss = self.criterion(logits, target)
+
+                pred = logits.argmax(dim=1)
+                total_loss += loss.item()
+                total_correct += (pred == target).sum().item()
+                total_samples += 1
+
+                all_preds.append(pred.detach().cpu())
+                all_targets.append(target.detach().cpu())
 
         preds_cat = torch.cat(all_preds)
         targets_cat = torch.cat(all_targets)
