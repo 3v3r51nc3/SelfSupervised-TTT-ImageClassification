@@ -59,6 +59,11 @@ ttt:
   adapt_scope: "encoder_plus_head"
   lambda_rot: 1.0
   rotation_mode: "rand"
+  # Hybrid Stage C: per_batch on the full 10k cell + per_image on a
+  # stratified 1k subsample. Per-image on the full cell would cost ~20h L4.
+  eval_mode: "both"  # one of {per_batch, per_image, both}
+  per_image_aug_k: 128
+  per_image_subsample: 1000
 
 logging:
   use_wandb: false

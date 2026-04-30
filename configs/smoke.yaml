@@ -61,6 +61,10 @@ ttt:
   adapt_scope: "encoder_plus_head"
   lambda_rot: 1.0
   rotation_mode: "rand"
+  # Smoke values — exercise both eval paths cheaply.
+  eval_mode: "both"
+  per_image_aug_k: 4
+  per_image_subsample: 32
 
 logging:
   use_wandb: false
