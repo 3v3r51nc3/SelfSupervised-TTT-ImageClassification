@@ -210,7 +210,8 @@ numbers will be reported once the overnight run completes.
 | Stage B.1 — Linear probe (frozen encoder, eval transforms) | done |
 | Stage B.2 — Fine-tune (label smoothing, RandAugment, drop_path, early stopping) | done |
 | Stage C — CIFAR-10-C eval over all corruptions × severities, baseline + TTT in one pass, CSV report | done |
-| TTT adapter — Sun 2020 TTT (rotation auxiliary, snapshot/reset per cell) | in progress (migrating from TENT) |
+| TTT adapter — Sun 2020 TTT (rotation auxiliary, snapshot/reset per cell) | done |
+| Stage B.2 trainer — joint CE + rotation loss with `lambda_rot` | done |
 | Pipeline orchestration — A → B.1 → B.2 → C with `reset_best()` between stages | done |
 | Evaluator — `evaluate` and `evaluate_with_ttt` | done |
 | Notebook — `CONFIG_PRESET` switch, Drive caching, CIFAR-10-C auto-download | done |

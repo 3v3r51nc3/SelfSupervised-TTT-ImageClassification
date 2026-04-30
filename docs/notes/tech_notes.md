@@ -243,34 +243,81 @@ labeled training images.
 
 ## Sun 2020 TTT — How TTT Is Actually Implemented
 
-> **Migration note (2026-04-30):** the project previously used TENT
-> (entropy minimization on LayerNorm). TENT is **not** self-supervised
-> and **not** per-image, so it does not match the TER2.pdf assignment
-> (title: *"Test-Time Training auto-supervisé"*; body: *"adapté
-> individuellement à chaque image de test"*). The TTT adapter is being
-> migrated to **Sun 2020 TTT (rotation auxiliary head)**, which is
-> per-image and self-supervised. This section will be filled in as the
-> new adapter ships in `src/ttt/adapter.py`.
+The concrete adaptation method used in this project is **Sun 2020 TTT
+(rotation auxiliary head)** from Sun *et al.* ICML 2020. It matches the
+TER2.pdf assignment ("Test-Time Training **auto-supervisé**" / "adapté
+**individuellement à chaque image** de test") because (a) the loss at
+test time is rotation-prediction CE — fully self-supervised — and (b) the
+adapter snapshots and restores model state per evaluation cell, which
+trivially extends to per-image adaptation via `rotation_mode = "expand"`.
 
-### Plan summary
+### Y-shape model (`src/models/classifier.py::TTTModel`)
 
-- **Y-shape model** — shared `encoder` (ViT-tiny) feeds two heads:
-  `classifier_head` (192 → 10) used at inference and `rotation_head`
-  (192 → 4) used as the SSL auxiliary at both Stage B.2 and Stage C.
-- **Stage B.2 (joint train)** — loss is
-  `CE(classifier(x), y, label_smoothing=0.1) + λ_rot · CE(rotation_head(rotate(x, "rand")))`
-  with `λ_rot = 1.0` (Sun 2020 default).
-- **Stage C (per-image / per-batch adapt)** — for each test sample:
-  1. snapshot+restore model state (deepcopy of `state_dict`),
-  2. for `K = steps` (default 1): rotate batch with random labels,
-     compute rotation CE on `rotation_head`, backward, step on
-     `encoder + rotation_head` (classifier frozen at test time),
-  3. classify the original image with `classifier_head` under `no_grad`.
-- **Snapshot/reset semantics across (corruption, severity)** are
-  preserved exactly as before.
+A shared `encoder` (ViT-tiny) feeds two heads:
 
-See `ignore/MIGRATION_PLAN_TENT_TO_SUN2020_TTT.md` for the full
-migration plan and reference repo (`yueatsprograms/ttt_cifar_release`).
+- `classifier`     — `nn.Linear(192, 10)`, used at inference.
+- `rotation_head`  — `nn.Linear(192, 4)`, SSL auxiliary, predicts the
+  rotation angle (0/90/180/270) applied to the input.
+
+`forward(x)` returns class logits; `forward_rotation(x)` returns rotation
+logits. Both share the encoder, so adapting the encoder at test time
+moves the classifier as well (the classifier itself stays frozen — see
+adapter section).
+
+### Stage B.2 — joint training (`src/training/ttt_finetune_trainer.py::TTTFineTuneTrainer`)
+
+Loss per batch:
+
+```
+L = CE(classifier(x), y, label_smoothing=0.1)
+  + λ_rot · CE(rotation_head(rotate(x, "rand")), rot_labels)
+```
+
+`λ_rot = 1.0` (Sun 2020 default, configurable via `ttt.lambda_rot`).
+Validation reports only the supervised CE / top-1 on un-rotated inputs,
+so the numbers stay directly comparable to a plain fine-tune baseline.
+
+### Stage C — adapter (`src/ttt/adapter.py::TestTimeAdapter`)
+
+For each test batch (`adapt_and_predict(images)`):
+
+1. Set `model.train()` everywhere except `model.classifier`, which goes
+   to `eval()` and has `requires_grad=False`. The supervised head must
+   not be perturbed at test time.
+2. For `K = steps` iterations (default 1, the Sun 2020 `niter`):
+   - `rotated, rot_labels = rotate_batch(images, rotation_mode)`
+   - `rot_logits = model.forward_rotation(rotated)`
+   - `loss = CE(rot_logits, rot_labels)`
+   - `optimizer.zero_grad(); loss.backward(); optimizer.step()`
+3. With `no_grad`, return `model(images)` classification logits.
+
+The optimizer is **SGD** over `encoder.parameters() + rotation_head.parameters()`
+with `lr = 1e-3` (Sun 2020 default). `rotation_mode` is `"rand"` for
+per-batch random labels (default) or `"expand"` for the per-image
+ablation that quadruples the input with all four fixed rotation labels.
+
+### Snapshot / reset semantics
+
+Test-time adaptation must not bleed across (corruption, severity)
+combinations — Gaussian-blur severity 5 should not warm-start the
+adapter for the next corruption. The adapter handles this by:
+
+1. Capturing `_initial_model_state = deepcopy(model.state_dict())` and
+   `_initial_optim_state = deepcopy(optimizer.state_dict())` in
+   `__init__`. The snapshot reflects the **clean joint-trained weights**.
+2. Exposing `reset()` which loads both snapshots back. The pipeline
+   calls `adapter.reset()` once at the start of each (corruption, severity).
+
+The pipeline builds the adapter exactly **once** before the corruption
+loop. If we built a new adapter per corruption, each new snapshot would
+capture weights that had already been mutated by the previous one.
+
+### Reference
+
+Adapted from `yueatsprograms/ttt_cifar_release` —
+`utils/rotation.py` (the rotation utilities) and
+`test_calls/test_adapt.py::adapt_single` (the per-image adapt loop,
+generalized here to per-batch).
 
 ---
 
