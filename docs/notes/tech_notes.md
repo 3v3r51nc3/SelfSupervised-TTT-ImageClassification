@@ -241,76 +241,36 @@ labeled training images.
 
 ---
 
-## TENT — How TTT Is Actually Implemented
+## Sun 2020 TTT — How TTT Is Actually Implemented
 
-The high-level idea of TTT was given above. The concrete adaptation method
-used in this project is **TENT (Test-time ENtropy minimization)** from
-Wang et al. 2021. It lives in `src/ttt/adapter.py` as `TestTimeAdapter`.
+> **Migration note (2026-04-30):** the project previously used TENT
+> (entropy minimization on LayerNorm). TENT is **not** self-supervised
+> and **not** per-image, so it does not match the TER2.pdf assignment
+> (title: *"Test-Time Training auto-supervisé"*; body: *"adapté
+> individuellement à chaque image de test"*). The TTT adapter is being
+> migrated to **Sun 2020 TTT (rotation auxiliary head)**, which is
+> per-image and self-supervised. This section will be filled in as the
+> new adapter ships in `src/ttt/adapter.py`.
 
-### Objective
+### Plan summary
 
-For each test batch, TENT minimizes the mean prediction entropy of the
-softmax outputs:
+- **Y-shape model** — shared `encoder` (ViT-tiny) feeds two heads:
+  `classifier_head` (192 → 10) used at inference and `rotation_head`
+  (192 → 4) used as the SSL auxiliary at both Stage B.2 and Stage C.
+- **Stage B.2 (joint train)** — loss is
+  `CE(classifier(x), y, label_smoothing=0.1) + λ_rot · CE(rotation_head(rotate(x, "rand")))`
+  with `λ_rot = 1.0` (Sun 2020 default).
+- **Stage C (per-image / per-batch adapt)** — for each test sample:
+  1. snapshot+restore model state (deepcopy of `state_dict`),
+  2. for `K = steps` (default 1): rotate batch with random labels,
+     compute rotation CE on `rotation_head`, backward, step on
+     `encoder + rotation_head` (classifier frozen at test time),
+  3. classify the original image with `classifier_head` under `no_grad`.
+- **Snapshot/reset semantics across (corruption, severity)** are
+  preserved exactly as before.
 
-```
-H(p) = - sum_c p_c · log p_c
-loss  = mean over batch of H(softmax(logits))
-```
-
-A confident prediction has low entropy — so minimizing entropy pushes the
-model toward sharper, more confident predictions on the shifted batch
-without needing any labels.
-
-### Which parameters are updated
-
-Only the **affine parameters of normalization layers** (`weight` and `bias`
-of `nn.LayerNorm`, `BatchNorm1d/2d`, `GroupNorm`) get `requires_grad=True`.
-Everything else (Q/K/V projections, MLPs, embeddings, classifier head)
-stays frozen. This is the `adapt_scope: norm_only` config flag.
-
-Why norm-only:
-- These parameters control activation scale/shift and respond directly to
-  distribution shift.
-- They are tiny (a few thousand scalars in ViT-Tiny) so updating them is
-  cheap and stable.
-- Touching the rest of the network would erase the supervised classifier
-  and the SSL features.
-
-### Snapshot / reset semantics
-
-Test-time adaptation must not bleed across (corruption, severity)
-combinations — Gaussian-blur severity 5 should not warm-start the adapter
-state for the next corruption. The adapter handles this by:
-
-1. Capturing `_initial_state = model.state_dict()` clones in `__init__`,
-   so the snapshot reflects the **clean fine-tuned weights**.
-2. Capturing `_initial_optim_state` (a deep copy of the Adam state dict).
-3. Exposing `reset()` which loads both snapshots back. The pipeline calls
-   `adapter.reset()` once at the start of each (corruption, severity).
-
-The pipeline builds the adapter exactly **once** before the corruption
-loop. If we built a new adapter per corruption, each new snapshot would
-capture weights that had already been mutated by the previous corruption.
-
-### Forward / backward at test time
-
-For each test batch (`adapt_and_predict`):
-
-1. Set the model to `eval()` everywhere **except** norm layers, which are
-   put back to `train()`. This is needed because BatchNorm-style modules
-   behave differently in eval; LayerNorm doesn't care, but the rule is
-   uniform across norm types.
-2. For `K = steps` iterations (`steps=1` in the config — TENT default):
-   - forward the batch → logits
-   - compute entropy loss
-   - `optimizer.zero_grad()` → `loss.backward()` → `optimizer.step()`
-3. After adaptation, run a final no-grad forward pass to get the logits
-   that are returned to the evaluator.
-
-The optimizer is **Adam** (not AdamW) over the norm parameters with
-`lr = 1e-4`. Adam is the original TENT choice and it's intentional: TTT
-runs for one or two steps per batch, so weight-decay schedules are
-irrelevant.
+See `ignore/MIGRATION_PLAN_TENT_TO_SUN2020_TTT.md` for the full
+migration plan and reference repo (`yueatsprograms/ttt_cifar_release`).
 
 ---
 
@@ -369,7 +329,8 @@ The pipeline (`src/core/pipeline.py`) runs four stages in strict order:
    - Inputs: `finetune_best.pt`, all 19 corruptions × 5 severities of
      CIFAR-10-C, plus the clean test set.
    - For each (corruption, severity) computes both **baseline** (no
-     adaptation) and **TTT** (TENT, K=1) accuracy / loss.
+     adaptation) and **TTT** (Sun 2020 TTT, rotation auxiliary, K=1)
+     accuracy / loss.
    - Output artifact: `logs/<exp>/cifar10c_results.csv`.
 
 `CheckpointManager.reset_best()` is called at the start of every training
@@ -388,7 +349,7 @@ Stage B.1, etc.
 | `severity` | 1–5, or `0` for the `clean` row |
 | `baseline_accuracy` | top-1 accuracy of fine-tuned model on this set |
 | `baseline_loss` | cross-entropy on this set |
-| `ttt_accuracy` | top-1 accuracy after per-batch TENT adaptation |
+| `ttt_accuracy` | top-1 accuracy after Sun 2020 TTT adaptation (rotation auxiliary, per-batch) |
 | `ttt_loss` | cross-entropy after adaptation |
 | `delta_accuracy` | `ttt_accuracy - baseline_accuracy` (positive = TTT helped) |
 
@@ -508,14 +469,12 @@ Papers and codebases the project builds on.
 
 ### Test-time adaptation
 
-- **TTT (original)** — Sun, Y., Wang, X., Liu, Z., Miller, J., Efros, A.,
-  Hardt, M. "Test-Time Training with Self-Supervision for Generalization
-  under Distribution Shifts." *ICML 2020.*
-  [arXiv:1909.13231](https://arxiv.org/abs/1909.13231)
-- **TENT (the method actually implemented)** — Wang, D., Shelhamer, E.,
-  Liu, S., Olshausen, B., Darrell, T. "Tent: Fully Test-Time Adaptation
-  by Entropy Minimization." *ICLR 2021.*
-  [arXiv:2006.10726](https://arxiv.org/abs/2006.10726)
+- **TTT (Sun 2020, the method actually implemented)** — Sun, Y.,
+  Wang, X., Liu, Z., Miller, J., Efros, A., Hardt, M. "Test-Time
+  Training with Self-Supervision for Generalization under Distribution
+  Shifts." *ICML 2020.*
+  [arXiv:1909.13231](https://arxiv.org/abs/1909.13231).
+  Reference implementation: `github.com/yueatsprograms/ttt_cifar_release`.
 
 ### Datasets
 

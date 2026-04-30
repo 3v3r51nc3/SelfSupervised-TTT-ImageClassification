@@ -8,7 +8,7 @@ and runs the stages in order:
 - Stage B.1 - Linear probe with the frozen encoder (representation quality baseline).
 - Stage B.2 - Full fine-tuning of encoder + classifier.
 - Stage C   - Robustness eval on CIFAR-10-C (baseline).
-- Stage D   - Test-time training (TENT) on each (corruption, severity) stream.
+- Stage D   - Test-time training (Sun 2020 TTT, rotation auxiliary) on each (corruption, severity) stream.
 """
 
 from __future__ import annotations
@@ -28,7 +28,6 @@ from src.models.simclr import SimCLRModel
 from src.training.finetune_trainer import FineTuneTrainer
 from src.training.linear_probe_trainer import LinearProbeTrainer
 from src.training.simclr_trainer import SimCLRTrainer
-from src.ttt.adapter import TestTimeAdapter
 from src.utils.checkpoint import CheckpointManager
 from src.utils.logger import ExperimentLogger
 from src.utils.seed import set_seed
@@ -428,12 +427,10 @@ class ExperimentPipeline:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _make_ttt_adapter(self, model: FineTuneModel) -> TestTimeAdapter:
-        return TestTimeAdapter(
-            model=model,
-            steps=self.config.ttt.steps,
-            learning_rate=self.config.ttt.learning_rate,
-            adapt_scope=self.config.ttt.adapt_scope,
+    def _make_ttt_adapter(self, model: FineTuneModel):
+        raise NotImplementedError(
+            "TTT adapter is being migrated to Sun 2020 TTT (rotation auxiliary). "
+            "Set ttt.enabled=false until the new adapter ships."
         )
 
     def _dump_stage_c_csv(

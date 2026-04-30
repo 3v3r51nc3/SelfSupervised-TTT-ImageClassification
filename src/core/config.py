@@ -82,7 +82,7 @@ class TTTConfig:
     steps: int
     learning_rate: float
     adapt_scope: str
-    method: str = "tent"
+    method: str = "sun2020"
 
 
 @dataclass(frozen=True)
@@ -164,7 +164,5 @@ class ConfigLoader:
             raise ValueError("simclr.warmup_epochs must be in [0, simclr.epochs).")
         if config.finetune.warmup_epochs < 0 or config.finetune.warmup_epochs >= config.finetune.epochs:
             raise ValueError("finetune.warmup_epochs must be in [0, finetune.epochs).")
-        if config.ttt.enabled and config.ttt.adapt_scope not in {"norm_only", "all"}:
-            raise ValueError("ttt.adapt_scope must be 'norm_only' or 'all'.")
-        if config.ttt.enabled and config.ttt.method not in {"tent"}:
-            raise ValueError("ttt.method must be 'tent' (only supported method).")
+        if config.ttt.enabled and config.ttt.method not in {"sun2020"}:
+            raise ValueError("ttt.method must be 'sun2020' (only supported method).")

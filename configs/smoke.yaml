@@ -1,6 +1,6 @@
 # Smoke-test config — exercises the full pipeline end-to-end in a few minutes.
-# Use it to verify code paths (data, AMP, scheduler, TTT, CSV dump) before
-# committing GPU time to default.yaml.
+# Use it to verify code paths (data, AMP, scheduler, Sun 2020 TTT, CSV dump)
+# before committing GPU time to default.yaml.
 
 experiment:
   name: "smoke-test"
@@ -52,11 +52,13 @@ finetune:
 
 
 ttt:
-  enabled: true
-  method: "tent"
+  # TENT removed (does not match TER2.pdf "auto-supervisé" / per-image instruction).
+  # Sun 2020 TTT adapter is being wired in; flip enabled back to true once ready.
+  enabled: false
+  method: "sun2020"
   steps: 1
-  learning_rate: 1.0e-4
-  adapt_scope: "norm_only"
+  learning_rate: 1.0e-3
+  adapt_scope: "encoder_plus_head"
 
 logging:
   use_wandb: false

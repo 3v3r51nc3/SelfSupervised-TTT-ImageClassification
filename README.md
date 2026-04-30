@@ -54,8 +54,8 @@ Build and evaluate a complete pipeline based on:
   across 14 corruptions × 5 severities (the four families: noise, blur,
   weather, digital).
 - For each (corruption, severity) compute both the **baseline** (no
-  adaptation) and **TTT** (TENT, entropy minimization on LayerNorm
-  affine parameters only) accuracy and loss in the same pass.
+  adaptation) and **TTT** (Sun 2020 TTT, rotation auxiliary head adapted
+  per test image / batch) accuracy and loss in the same pass.
 - The adapter is built once and reset between (corruption, severity)
   sets so adaptation never bleeds across them.
 - Output: `logs/<exp>/cifar10c_results.csv` with per-row baseline /
@@ -95,8 +95,9 @@ The project notes used to explain the main design choices live in
   level), CIFAR-10 / CIFAR-10-C.
 - **Training recipe glossary** — AMP, AdamW + weight decay, warmup +
   cosine scheduler factory.
-- **TENT (the actual TTT method)** — entropy minimization on LayerNorm
-  affine params, snapshot/reset semantics across (corruption, severity).
+- **Sun 2020 TTT (the actual TTT method)** — rotation auxiliary head,
+  per-image / per-batch adaptation, snapshot/reset semantics across
+  (corruption, severity).
 - **Augmentation pipelines** — SimCLR vs supervised-train vs eval (table).
 - **Stage orchestration & artifact flow** — how A → B.1 → B.2 → C feed
   each other.
@@ -117,7 +118,7 @@ Two configs are shipped:
 - **`configs/default.yaml`** — overnight-grade run (SimCLR 200 ep,
   fine-tune 30 ep, linear probe 30 ep, full Stage C eval) with AMP,
   AdamW, warmup + cosine, RandAugment, label smoothing, drop_path,
-  early stopping, and TENT-style TTT enabled.
+  early stopping, and Sun 2020 TTT enabled.
 
 Always run smoke first, then switch to default for the real run.
 
@@ -193,7 +194,7 @@ augmentation on the supervised stage exhibited classic overfitting in
 fine-tuning (val loss climbing while train accuracy reached ~94%). This
 result is no longer representative — the project has since switched to
 the full overnight recipe (200 SSL epochs, AMP, AdamW, cosine + warmup,
-RandAugment, label smoothing, early stopping, TENT-style TTT). Final
+RandAugment, label smoothing, early stopping, Sun 2020 TTT). Final
 numbers will be reported once the overnight run completes.
 
 ## Current Status
@@ -209,7 +210,7 @@ numbers will be reported once the overnight run completes.
 | Stage B.1 — Linear probe (frozen encoder, eval transforms) | done |
 | Stage B.2 — Fine-tune (label smoothing, RandAugment, drop_path, early stopping) | done |
 | Stage C — CIFAR-10-C eval over all corruptions × severities, baseline + TTT in one pass, CSV report | done |
-| TTT adapter — TENT (entropy minimization on LayerNorm affine params, snapshot/reset) | done |
+| TTT adapter — Sun 2020 TTT (rotation auxiliary, snapshot/reset per cell) | in progress (migrating from TENT) |
 | Pipeline orchestration — A → B.1 → B.2 → C with `reset_best()` between stages | done |
 | Evaluator — `evaluate` and `evaluate_with_ttt` | done |
 | Notebook — `CONFIG_PRESET` switch, Drive caching, CIFAR-10-C auto-download | done |

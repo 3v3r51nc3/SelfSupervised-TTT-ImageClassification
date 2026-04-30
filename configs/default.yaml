@@ -1,4 +1,4 @@
-# Overnight-grade config for SimCLR + ViT + CIFAR-10 + TTT.
+# Overnight-grade config for SimCLR + ViT + CIFAR-10 + Sun 2020 TTT.
 # Tuned for L4 (22GB) with AMP enabled.
 
 experiment:
@@ -50,11 +50,13 @@ finetune:
   early_stopping_patience: 10
 
 ttt:
-  enabled: true
-  method: "tent"
+  # TENT removed (does not match TER2.pdf "auto-supervisé" / per-image instruction).
+  # Sun 2020 TTT adapter is being wired in; flip enabled back to true once ready.
+  enabled: false
+  method: "sun2020"
   steps: 1
-  learning_rate: 1.0e-4
-  adapt_scope: "norm_only"
+  learning_rate: 1.0e-3
+  adapt_scope: "encoder_plus_head"
 
 logging:
   use_wandb: false

@@ -10,3 +10,4 @@ wandb/
 dist/
 build/
 .venv/
+ignore/
