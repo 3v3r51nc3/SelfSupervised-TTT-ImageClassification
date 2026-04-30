@@ -187,15 +187,96 @@ If you do not have a local CUDA GPU, Colab is the recommended way to run
 longer experiments. The overnight `default` config targets an L4 / A100
 (roughly 2–3 h on an L4); plain T4 is workable but slower.
 
-## Preliminary Results (deprecated 20-epoch SSL run)
+## Preliminary Results (first overnight run, 2026-04-30)
 
-An early sanity-check Stage A run with only 20 SimCLR epochs and no
-augmentation on the supervised stage exhibited classic overfitting in
-fine-tuning (val loss climbing while train accuracy reached ~94%). This
-result is no longer representative — the project has since switched to
-the full overnight recipe (200 SSL epochs, AMP, AdamW, cosine + warmup,
-RandAugment, label smoothing, early stopping, Sun 2020 TTT). Final
-numbers will be reported once the overnight run completes.
+First end-to-end run with the overnight recipe (SimCLR 200 ep, fine-tune
+30 ep, full Stage C eval over 14 corruptions × 5 severities). Logs in
+[`logs/simclr-vit-cifar10-ter/`](logs/simclr-vit-cifar10-ter/).
+
+### Clean accuracy
+| Setting | Top-1 |
+|---|---|
+| Stage B.2 fine-tune val (epoch 30, best) | **0.9008** |
+| Stage C clean baseline (no TTT) | 0.8959 |
+| Stage C clean + per-batch TTT | 0.8960 (Δ +0.0001) |
+| Stage C clean + per-image TTT (1k subset) | 0.8980 |
+
+No degradation on clean data — the rotation auxiliary head does not
+break the classifier when adapted at test time.
+
+### CIFAR-10-C (mean accuracy over 14 corruptions)
+TTT params: `lr=1e-3`, `steps=1`, `lambda_rot=1.0`,
+`adapt_scope=encoder_plus_head`, `rotation_mode=rand`.
+
+| Severity | baseline | per-batch | per-image (1k) | Δ batch | Δ image* |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 0.8673 | 0.8679 | 0.8666 | +0.0007 | -0.0006 |
+| 2 | 0.8392 | 0.8409 | 0.8395 | +0.0017 | +0.0003 |
+| 3 | 0.8033 | 0.8059 | 0.8033 | +0.0025 |  0.0000 |
+| 4 | 0.7516 | 0.7575 | 0.7534 | +0.0059 | +0.0018 |
+| 5 | 0.6803 | 0.6890 | 0.6830 | +0.0087 | +0.0027 |
+| **mean** | **0.7883** | **0.7922** | **0.7892** | **+0.0039** | **+0.0009** |
+
+\* per-image deltas above are vs the full 10 k baseline; on the matched
+1 k subset (apples-to-apples) per-image actually averages **Δ = −0.0048**
+with **16 wins / 46 losses / 8 ties** out of 70 cells.
+
+### Win/loss per cell (70 cells, severity ≥ 1)
+| Mode | wins | losses | ties |
+|---|---:|---:|---:|
+| per-batch (vs full baseline) | **61** | 6 | 3 |
+| per-image (vs subset baseline) | 16 | **46** | 8 |
+
+### Headline corruptions (severity 5, biggest gains for per-batch)
+| Corruption | baseline | per-batch | Δ |
+|---|---:|---:|---:|
+| fog | 0.5367 | 0.5586 | **+0.0219** |
+| pixelate | 0.7378 | 0.7530 | +0.0152 |
+| impulse_noise | 0.3959 | 0.4109 | +0.0150 |
+| pixelate s4 | 0.7634 | 0.7772 | +0.0138 |
+| contrast | 0.5919 | 0.6039 | +0.0120 |
+| gaussian_noise s4 | 0.5556 | 0.5679 | +0.0123 |
+
+### Interpretation
+1. **Per-batch TTT works as advertised**: small but consistent gain that
+   grows with severity (+0.07 pp at sev 1 → +0.87 pp at sev 5), 61/70
+   cells improved, no regression on clean data. This is the expected
+   Sun 2020 TTT signature.
+2. **Per-image TTT degrades on this ViT/LN setup**. Adapting one image
+   at a time produces a net negative Δ on a matched subset, losing on
+   46/70 cells. Hypotheses (ranked):
+   - ViT uses LayerNorm, so per-image adaptation cannot exploit the
+     batch-statistics regularization that BN-based TTT relies on;
+   - 128 rotated copies of a single image is a thin signal — the
+     `lr=1e-3, steps=1` recipe was tuned for batches, not single
+     images;
+   - encoder + rotation-head scope may be over-parameterized for a
+     single-image update, causing the encoder to drift.
+3. **Gains concentrate on heavy corruptions** (fog 5, pixelate 4-5,
+   noise 4-5, contrast 5). These are the regimes where the rotation
+   pretext task has the most signal-to-noise to give back.
+
+This is a **preliminary** result on a single seed — variance bars and
+the lr/steps ablation are needed before claiming the per-image
+degradation is a property of the method rather than the recipe.
+
+## Next Steps
+1. **Ablate the per-image recipe** using the configs already in
+   [`configs/ablation/`](configs/ablation/): `lr_1e-4.yaml`,
+   `lr_1e-5.yaml`, `steps_5.yaml`, `steps_10.yaml`,
+   `lr_1e-5_steps_10.yaml`, `expand_k1.yaml`. Check if a smaller LR or
+   more steps reverse the per-image regression.
+2. **Multi-seed re-run** of the default config (≥3 seeds) to put error
+   bars on the +0.39 pp per-batch mean gain — the gain is small enough
+   that single-seed noise could dominate.
+3. **Restrict adapt scope** to `encoder` only or to `head` only, to
+   isolate where the per-image drift originates.
+4. **Aggregate plots**: severity curves and per-corruption bar charts
+   from `cifar10c_results.csv` for the report (notebooks/colab.ipynb
+   already loads the long-format summary).
+5. **Latency bookkeeping**: log per-cell adaptation time so the
+   per-image vs per-batch trade-off is reported in both accuracy and
+   wall-clock.
 
 ## Current Status
 
@@ -215,7 +296,9 @@ numbers will be reported once the overnight run completes.
 | Pipeline orchestration — A → B.1 → B.2 → C with `reset_best()` between stages | done |
 | Evaluator — `evaluate` and `evaluate_with_ttt` | done |
 | Notebook — `CONFIG_PRESET` switch, Drive caching, CIFAR-10-C auto-download | done |
-| Overnight run on L4/A100 with `configs/default.yaml` | pending |
+| Overnight run on L4/A100 with `configs/default.yaml` | done (2026-04-30, single seed) |
+| TTT lr/steps ablation sweep | pending |
+| Multi-seed re-run for variance bars | pending |
 
 ## References
 
