@@ -357,8 +357,8 @@ class ExperimentPipeline:
             )
 
         results: dict[str, dict[int, dict[str, float]]] = {
-            "_clean": {0: {**{f"baseline_{k}": v for k, v in clean_baseline.items() if k != "per_class_accuracy"},
-                           **({f"ttt_{k}": v for k, v in clean_ttt.items() if k != "per_class_accuracy"} if clean_ttt else {})}},
+            "clean": {0: {**{f"baseline_{k}": v for k, v in clean_baseline.items() if k != "per_class_accuracy"},
+                          **({f"ttt_{k}": v for k, v in clean_ttt.items() if k != "per_class_accuracy"} if clean_ttt else {})}},
         }
 
         per_class_rows: list[dict[str, object]] = []
