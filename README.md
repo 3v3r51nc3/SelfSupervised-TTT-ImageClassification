@@ -51,7 +51,8 @@ Build and evaluate a complete pipeline based on:
 
 5. **Stage C: Robustness + TTT Evaluation (combined)**
 - Evaluate the fine-tuned classifier on clean CIFAR-10 and on CIFAR-10-C
-  across all 19 corruptions × 5 severities.
+  across 14 corruptions × 5 severities (the four families: noise, blur,
+  weather, digital).
 - For each (corruption, severity) compute both the **baseline** (no
   adaptation) and **TTT** (TENT, entropy minimization on LayerNorm
   affine parameters only) accuracy and loss in the same pass.
