@@ -216,3 +216,80 @@ numbers will be reported once the overnight run completes.
 | Evaluator — `evaluate` and `evaluate_with_ttt` | done |
 | Notebook — `CONFIG_PRESET` switch, Drive caching, CIFAR-10-C auto-download | done |
 | Overnight run on L4/A100 with `configs/default.yaml` | pending |
+
+## References
+
+Detailed citations and discussion live in
+[`docs/notes/tech_notes.md`](docs/notes/tech_notes.md). Short list:
+
+### Architecture
+- **ViT** — Dosovitskiy, A. *et al.* "An Image is Worth 16x16 Words:
+  Transformers for Image Recognition at Scale." *ICLR 2021.*
+  [arXiv:2010.11929](https://arxiv.org/abs/2010.11929)
+- **timm library** — Wightman, R. "PyTorch Image Models." 2019.
+  [github.com/huggingface/pytorch-image-models](https://github.com/huggingface/pytorch-image-models)
+
+### Self-supervised pretraining
+- **SimCLR / NT-Xent** — Chen, T., Kornblith, S., Norouzi, M., Hinton, G.
+  "A Simple Framework for Contrastive Learning of Visual Representations."
+  *ICML 2020.* [arXiv:2002.05709](https://arxiv.org/abs/2002.05709)
+
+### Test-time adaptation
+- **TTT (Sun 2020, the method actually implemented)** — Sun, Y.,
+  Wang, X., Liu, Z., Miller, J., Efros, A., Hardt, M. "Test-Time
+  Training with Self-Supervision for Generalization under Distribution
+  Shifts." *ICML 2020.*
+  [arXiv:1909.13231](https://arxiv.org/abs/1909.13231).
+  Reference implementation:
+  [github.com/yueatsprograms/ttt_cifar_release](https://github.com/yueatsprograms/ttt_cifar_release).
+
+### Datasets
+- **CIFAR-10** — Krizhevsky, A. "Learning Multiple Layers of Features
+  from Tiny Images." Tech. Report, 2009.
+  [cs.toronto.edu/~kriz/cifar.html](https://www.cs.toronto.edu/~kriz/cifar.html)
+- **CIFAR-10-C** — Hendrycks, D., Dietterich, T. "Benchmarking Neural
+  Network Robustness to Common Corruptions and Perturbations."
+  *ICLR 2019.* [arXiv:1903.12261](https://arxiv.org/abs/1903.12261)
+
+### Optimization & scheduling
+- **AdamW** — Loshchilov, I., Hutter, F. "Decoupled Weight Decay
+  Regularization." *ICLR 2019.*
+  [arXiv:1711.05101](https://arxiv.org/abs/1711.05101)
+- **Cosine annealing (SGDR)** — Loshchilov, I., Hutter, F. "SGDR:
+  Stochastic Gradient Descent with Warm Restarts." *ICLR 2017.*
+  [arXiv:1608.03983](https://arxiv.org/abs/1608.03983)
+- **Linear LR warmup (large-batch training)** — Goyal, P. *et al.*
+  "Accurate, Large Minibatch SGD: Training ImageNet in 1 Hour." 2017.
+  [arXiv:1706.02677](https://arxiv.org/abs/1706.02677)
+- **Mixed precision training** — Micikevicius, P. *et al.* "Mixed
+  Precision Training." *ICLR 2018.*
+  [arXiv:1710.03740](https://arxiv.org/abs/1710.03740)
+
+### Regularization
+- **Label smoothing** — Szegedy, C. *et al.* "Rethinking the Inception
+  Architecture for Computer Vision." *CVPR 2016.*
+  [arXiv:1512.00567](https://arxiv.org/abs/1512.00567)
+- **Stochastic depth (drop_path)** — Huang, G. *et al.* "Deep Networks
+  with Stochastic Depth." *ECCV 2016.*
+  [arXiv:1603.09382](https://arxiv.org/abs/1603.09382)
+- **RandAugment** — Cubuk, E. D., Zoph, B., Shlens, J., Le, Q. V.
+  "RandAugment: Practical Automated Data Augmentation with a Reduced
+  Search Space." *NeurIPS 2020.*
+  [arXiv:1909.13719](https://arxiv.org/abs/1909.13719)
+- **Random Erasing** — Zhong, Z. *et al.* "Random Erasing Data
+  Augmentation." *AAAI 2020.*
+  [arXiv:1708.04896](https://arxiv.org/abs/1708.04896)
+
+### Normalization
+- **LayerNorm** — Ba, J. L., Kiros, J. R., Hinton, G. E. "Layer
+  Normalization." 2016.
+  [arXiv:1607.06450](https://arxiv.org/abs/1607.06450)
+- **BatchNorm** — Ioffe, S., Szegedy, C. "Batch Normalization." *ICML 2015.*
+  [arXiv:1502.03167](https://arxiv.org/abs/1502.03167)
+- **GroupNorm** — Wu, Y., He, K. "Group Normalization." *ECCV 2018.*
+  [arXiv:1803.08494](https://arxiv.org/abs/1803.08494)
+
+### Frameworks
+- **PyTorch** — Paszke, A. *et al.* "PyTorch: An Imperative Style,
+  High-Performance Deep Learning Library." *NeurIPS 2019.*
+  [arXiv:1912.01703](https://arxiv.org/abs/1912.01703)
