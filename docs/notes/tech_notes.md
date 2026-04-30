@@ -119,6 +119,38 @@ labels** and compared against the same model **without TTT**. The key
 question is not just whether the model predicts well, but whether this
 test-time adaptation actually helps under distribution shift.
 
+### Self-supervised vs unsupervised — the reason TENT was rejected
+
+Both terms describe label-free training, but they are not the same
+thing. TER2.pdf explicitly asks for **auto-supervisé** (self-supervised)
+test-time adaptation, which rules out one whole family of methods.
+
+| | Unsupervised | Self-supervised |
+|---|---|---|
+| Has a prediction target? | No — the objective looks at the data alone (clusters, density, low-rank structure). | Yes — a synthetic target is **generated from the input itself** (rotation angle, masked pixel, contrastive pair). |
+| Loss form | likelihood, reconstruction, entropy of own predictions, … | standard supervised loss (usually CE) against the synthetic label. |
+| Examples | K-means, PCA, autoencoder reconstruction, **TENT** (entropy minimization on the model's own logits). | SimCLR (contrastive pair labels), MAE (masked-pixel target), **Sun 2020 TTT** (rotation-angle label). |
+
+**TENT** (Wang *et al.* ICLR 2021) adapts at test time by minimizing
+the entropy of the classifier's own softmax distribution — it never
+constructs a synthetic prediction target, just sharpens the existing
+one. By the column above this is *unsupervised*, not self-supervised,
+which is why it does not satisfy "auto-supervisé" in the TER and was
+removed from this project.
+
+**Sun 2020 TTT** is squarely in the self-supervised column: the
+rotation auxiliary takes the test image, applies one of four rotations,
+*and the rotation index becomes the supervised label* for a CE loss on
+`rotation_head`. The label is fabricated from the input via a
+deterministic transform — exactly the SimCLR / MAE pattern, just with
+"angle of rotation" as the pretext task.
+
+This is also why the rotation auxiliary is wired in at training time
+(joint CE + rotation in Stage B.2): the rotation head needs to be
+trained on clean data first so that at test time its gradient signal
+is meaningful. TENT does not have this two-stage shape because it
+never trained an auxiliary head.
+
 ---
 
 ## CIFAR-10 and CIFAR-10-C
