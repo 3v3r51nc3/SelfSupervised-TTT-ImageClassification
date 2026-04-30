@@ -1,8 +1,8 @@
 """
 Evaluator for clean and corrupted datasets (CIFAR-10 / CIFAR-10-C).
 
-Computes top-1 accuracy and cross-entropy loss for any DataLoader.
-Stage C uses evaluate(); Stage D will use evaluate_with_ttt().
+Computes top-1 accuracy, cross-entropy loss, and per-class accuracy
+for any DataLoader. Stage C uses evaluate(); Stage D uses evaluate_with_ttt().
 """
 
 from __future__ import annotations
@@ -13,6 +13,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
+from src.evaluation.metrics import per_class_accuracy
+
 
 class TTTAdapter(Protocol):
     def adapt_and_predict(self, images: torch.Tensor) -> torch.Tensor: ...
@@ -20,17 +22,20 @@ class TTTAdapter(Protocol):
 
 
 class Evaluator:
-    def __init__(self, model: nn.Module, device: torch.device) -> None:
+    def __init__(self, model: nn.Module, device: torch.device, num_classes: int = 10) -> None:
         self.model = model
         self.device = device
+        self.num_classes = num_classes
         self.criterion = nn.CrossEntropyLoss()
 
-    def evaluate(self, loader: DataLoader) -> dict[str, float]:
+    def evaluate(self, loader: DataLoader) -> dict[str, object]:
         """Evaluate the model without TTT adaptation."""
         self.model.eval()
         total_loss = 0.0
         total_correct = 0
         total_samples = 0
+        all_preds: list[torch.Tensor] = []
+        all_targets: list[torch.Tensor] = []
 
         with torch.no_grad():
             for images, targets in loader:
@@ -40,23 +45,33 @@ class Evaluator:
                 logits = self.model(images)
                 loss = self.criterion(logits, targets)
 
+                preds = logits.argmax(dim=1)
                 batch_size = images.size(0)
                 total_loss += loss.item() * batch_size
-                total_correct += (logits.argmax(dim=1) == targets).sum().item()
+                total_correct += (preds == targets).sum().item()
                 total_samples += batch_size
+
+                all_preds.append(preds.detach().cpu())
+                all_targets.append(targets.detach().cpu())
+
+        preds_cat = torch.cat(all_preds)
+        targets_cat = torch.cat(all_targets)
 
         return {
             "loss": total_loss / total_samples,
             "accuracy": total_correct / total_samples,
+            "per_class_accuracy": per_class_accuracy(preds_cat, targets_cat, self.num_classes),
         }
 
-    def evaluate_with_ttt(self, loader: DataLoader, ttt_adapter: TTTAdapter) -> dict[str, float]:
+    def evaluate_with_ttt(self, loader: DataLoader, ttt_adapter: TTTAdapter) -> dict[str, object]:
         """Evaluate the model with TTT — adapt then predict per batch."""
         ttt_adapter.reset()
 
         total_loss = 0.0
         total_correct = 0
         total_samples = 0
+        all_preds: list[torch.Tensor] = []
+        all_targets: list[torch.Tensor] = []
 
         for images, targets in loader:
             images = images.to(self.device, non_blocking=True)
@@ -65,12 +80,20 @@ class Evaluator:
             logits = ttt_adapter.adapt_and_predict(images)
             loss = self.criterion(logits, targets)
 
+            preds = logits.argmax(dim=1)
             batch_size = images.size(0)
             total_loss += loss.item() * batch_size
-            total_correct += (logits.argmax(dim=1) == targets).sum().item()
+            total_correct += (preds == targets).sum().item()
             total_samples += batch_size
+
+            all_preds.append(preds.detach().cpu())
+            all_targets.append(targets.detach().cpu())
+
+        preds_cat = torch.cat(all_preds)
+        targets_cat = torch.cat(all_targets)
 
         return {
             "loss": total_loss / total_samples,
             "accuracy": total_correct / total_samples,
+            "per_class_accuracy": per_class_accuracy(preds_cat, targets_cat, self.num_classes),
         }

@@ -331,7 +331,7 @@ class ExperimentPipeline:
     ) -> dict[str, dict[int, dict[str, float]]]:
         self.logger.info("Starting Stage C: CIFAR-10-C evaluation (baseline + TTT)")
 
-        evaluator = Evaluator(model=model, device=self.device)
+        evaluator = Evaluator(model=model, device=self.device, num_classes=CIFAR10_NUM_CLASSES)
         ttt_enabled = self.config.ttt.enabled
 
         # Build the adapter once so its snapshot captures the clean fine-tuned weights.
@@ -346,7 +346,7 @@ class ExperimentPipeline:
             clean_baseline["loss"],
         )
 
-        clean_ttt: dict[str, float] | None = None
+        clean_ttt: dict[str, object] | None = None
         if adapter is not None:
             clean_ttt = evaluator.evaluate_with_ttt(clean_loader, adapter)
             self.logger.info(
@@ -357,9 +357,14 @@ class ExperimentPipeline:
             )
 
         results: dict[str, dict[int, dict[str, float]]] = {
-            "_clean": {0: {**{f"baseline_{k}": v for k, v in clean_baseline.items()},
-                           **({f"ttt_{k}": v for k, v in clean_ttt.items()} if clean_ttt else {})}},
+            "_clean": {0: {**{f"baseline_{k}": v for k, v in clean_baseline.items() if k != "per_class_accuracy"},
+                           **({f"ttt_{k}": v for k, v in clean_ttt.items() if k != "per_class_accuracy"} if clean_ttt else {})}},
         }
+
+        per_class_rows: list[dict[str, object]] = []
+        per_class_rows.append(self._per_class_row("clean", 0, "baseline", clean_baseline))
+        if clean_ttt is not None:
+            per_class_rows.append(self._per_class_row("clean", 0, "ttt", clean_ttt))
 
         rows: list[dict[str, object]] = []
         for corruption in CIFARDataModule.cifar10c_corruptions():
@@ -376,6 +381,7 @@ class ExperimentPipeline:
                     "baseline_accuracy": baseline["accuracy"],
                     "baseline_loss": baseline["loss"],
                 }
+                per_class_rows.append(self._per_class_row(corruption, severity, "baseline", baseline))
 
                 if adapter is not None:
                     ttt_metrics = evaluator.evaluate_with_ttt(loader, adapter)
@@ -397,6 +403,7 @@ class ExperimentPipeline:
                         "ttt_loss": ttt_metrics["loss"],
                         "delta_accuracy": row["delta_accuracy"],
                     }
+                    per_class_rows.append(self._per_class_row(corruption, severity, "ttt", ttt_metrics))
                 else:
                     self.logger.info(
                         "CIFAR-10-C %s sev=%d - acc=%.4f loss=%.4f",
@@ -413,6 +420,7 @@ class ExperimentPipeline:
                 rows.append(row)
 
         self._dump_stage_c_csv(rows, clean_baseline, clean_ttt)
+        self._dump_stage_c_per_class_csv(per_class_rows)
         self.logger.info("Completed Stage C: CIFAR-10-C evaluation")
         return results
 
@@ -431,8 +439,8 @@ class ExperimentPipeline:
     def _dump_stage_c_csv(
         self,
         rows: list[dict[str, object]],
-        clean_baseline: dict[str, float],
-        clean_ttt: dict[str, float] | None,
+        clean_baseline: dict[str, object],
+        clean_ttt: dict[str, object] | None,
     ) -> None:
         log_dir = Path(self.config.logging.log_dir) / self.config.experiment.name
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -460,6 +468,35 @@ class ExperimentPipeline:
             for row in rows:
                 writer.writerow(row)
         self.logger.info("Stage C report saved to %s", out_path)
+
+    @staticmethod
+    def _per_class_row(
+        corruption: str, severity: int, branch: str, metrics: dict[str, object]
+    ) -> dict[str, object]:
+        per_class = metrics["per_class_accuracy"]
+        row: dict[str, object] = {
+            "corruption": corruption,
+            "severity": severity,
+            "branch": branch,
+        }
+        for cls_idx, acc in enumerate(per_class):
+            row[f"class_{cls_idx}"] = acc
+        return row
+
+    def _dump_stage_c_per_class_csv(self, per_class_rows: list[dict[str, object]]) -> None:
+        log_dir = Path(self.config.logging.log_dir) / self.config.experiment.name
+        log_dir.mkdir(parents=True, exist_ok=True)
+        out_path = log_dir / "cifar10c_per_class.csv"
+
+        fieldnames = ["corruption", "severity", "branch"] + [
+            f"class_{i}" for i in range(CIFAR10_NUM_CLASSES)
+        ]
+        with out_path.open("w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in per_class_rows:
+                writer.writerow(row)
+        self.logger.info("Stage C per-class report saved to %s", out_path)
 
     def _build_encoder(self):
         return ViTBackboneBuilder(
