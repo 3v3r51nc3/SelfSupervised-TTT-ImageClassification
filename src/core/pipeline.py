@@ -23,11 +23,12 @@ from src.core.config import ExperimentConfig
 from src.data.dataset import CIFARDataModule
 from src.evaluation.evaluator import Evaluator
 from src.models.backbone import ViTBackboneBuilder
-from src.models.classifier import FineTuneModel
+from src.models.classifier import FineTuneModel, TTTModel
 from src.models.simclr import SimCLRModel
-from src.training.finetune_trainer import FineTuneTrainer
 from src.training.linear_probe_trainer import LinearProbeTrainer
 from src.training.simclr_trainer import SimCLRTrainer
+from src.training.ttt_finetune_trainer import TTTFineTuneTrainer
+from src.ttt.adapter import TestTimeAdapter
 from src.utils.checkpoint import CheckpointManager
 from src.utils.logger import ExperimentLogger
 from src.utils.seed import set_seed
@@ -104,10 +105,10 @@ class ExperimentPipeline:
         )
         return data_module
 
-    def load_finetuned_model(self, checkpoint_filename: str = "finetune_best.pt") -> FineTuneModel:
-        """Rebuild a FineTuneModel and load weights from a saved fine-tune checkpoint."""
+    def load_finetuned_model(self, checkpoint_filename: str = "finetune_best.pt") -> TTTModel:
+        """Rebuild a TTTModel (encoder + classifier + rotation_head) and load fine-tune weights."""
         encoder = self._build_encoder()
-        ft_model = FineTuneModel(
+        ft_model = TTTModel(
             encoder=encoder,
             embed_dim=self.config.model.embed_dim,
             num_classes=CIFAR10_NUM_CLASSES,
@@ -275,14 +276,14 @@ class ExperimentPipeline:
 
     def run_stage_b2(
         self, encoder_path: Path, train_loader, val_loader
-    ) -> tuple[FineTuneModel, dict[str, list[float]]]:
-        self.logger.info("Starting Stage B.2: Fine-tuning")
+    ) -> tuple[TTTModel, dict[str, list[float]]]:
+        self.logger.info("Starting Stage B.2: Joint fine-tuning (CE + rotation auxiliary)")
         self.checkpoint_mgr.reset_best()
 
         encoder = self._build_encoder()
         encoder.load_state_dict(torch.load(encoder_path, map_location=self.device))
 
-        ft_model = FineTuneModel(
+        ft_model = TTTModel(
             encoder=encoder,
             embed_dim=self.config.model.embed_dim,
             num_classes=CIFAR10_NUM_CLASSES,
@@ -298,7 +299,7 @@ class ExperimentPipeline:
             total_epochs=self.config.finetune.epochs,
             warmup_epochs=self.config.finetune.warmup_epochs,
         )
-        trainer = FineTuneTrainer(
+        trainer = TTTFineTuneTrainer(
             model=ft_model,
             optimizer=optimizer,
             scheduler=scheduler,
@@ -309,6 +310,7 @@ class ExperimentPipeline:
             checkpoint_filename="finetune_best.pt",
             use_amp=self.config.finetune.use_amp,
             label_smoothing=self.config.finetune.label_smoothing,
+            lambda_rot=self.config.ttt.lambda_rot,
             early_stopping_patience=self.config.finetune.early_stopping_patience,
         )
 
@@ -326,7 +328,7 @@ class ExperimentPipeline:
     # ------------------------------------------------------------------
 
     def run_stage_c(
-        self, model: FineTuneModel, data_module: CIFARDataModule
+        self, model: TTTModel, data_module: CIFARDataModule
     ) -> dict[str, dict[int, dict[str, float]]]:
         self.logger.info("Starting Stage C: CIFAR-10-C evaluation (baseline + TTT)")
 
@@ -427,10 +429,14 @@ class ExperimentPipeline:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _make_ttt_adapter(self, model: FineTuneModel):
-        raise NotImplementedError(
-            "TTT adapter is being migrated to Sun 2020 TTT (rotation auxiliary). "
-            "Set ttt.enabled=false until the new adapter ships."
+    def _make_ttt_adapter(self, model: TTTModel) -> TestTimeAdapter:
+        return TestTimeAdapter(
+            model=model,
+            device=self.device,
+            steps=self.config.ttt.steps,
+            learning_rate=self.config.ttt.learning_rate,
+            adapt_scope=self.config.ttt.adapt_scope,
+            rotation_mode=self.config.ttt.rotation_mode,
         )
 
     def _dump_stage_c_csv(

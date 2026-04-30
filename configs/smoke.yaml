@@ -52,13 +52,15 @@ finetune:
 
 
 ttt:
-  # TENT removed (does not match TER2.pdf "auto-supervisé" / per-image instruction).
-  # Sun 2020 TTT adapter is being wired in; flip enabled back to true once ready.
-  enabled: false
+  # Sun 2020 TTT (rotation auxiliary): per-image / per-batch self-supervised
+  # adaptation matching TER2.pdf instructions.
+  enabled: true
   method: "sun2020"
   steps: 1
   learning_rate: 1.0e-3
   adapt_scope: "encoder_plus_head"
+  lambda_rot: 1.0
+  rotation_mode: "rand"
 
 logging:
   use_wandb: false

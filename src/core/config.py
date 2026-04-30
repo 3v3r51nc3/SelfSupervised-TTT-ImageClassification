@@ -83,6 +83,8 @@ class TTTConfig:
     learning_rate: float
     adapt_scope: str
     method: str = "sun2020"
+    lambda_rot: float = 1.0
+    rotation_mode: str = "rand"
 
 
 @dataclass(frozen=True)
@@ -166,3 +168,9 @@ class ConfigLoader:
             raise ValueError("finetune.warmup_epochs must be in [0, finetune.epochs).")
         if config.ttt.enabled and config.ttt.method not in {"sun2020"}:
             raise ValueError("ttt.method must be 'sun2020' (only supported method).")
+        if config.ttt.enabled and config.ttt.adapt_scope != "encoder_plus_head":
+            raise ValueError("ttt.adapt_scope must be 'encoder_plus_head' for sun2020 method.")
+        if config.ttt.enabled and config.ttt.rotation_mode not in {"rand", "expand"}:
+            raise ValueError("ttt.rotation_mode must be 'rand' or 'expand'.")
+        if config.ttt.lambda_rot < 0:
+            raise ValueError("ttt.lambda_rot must be non-negative.")
