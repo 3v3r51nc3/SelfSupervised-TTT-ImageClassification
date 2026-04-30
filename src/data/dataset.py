@@ -139,6 +139,19 @@ class CIFARDataModule:
             pin_memory=True,
         )
 
+    def test_loader_subsample(self, n_samples: int, seed: int) -> DataLoader:
+        """Stratified random subsample of the clean test set."""
+        labels = np.asarray(self.test_dataset.targets, dtype=np.int64)
+        indices = _stratified_indices(labels, n_samples=n_samples, seed=seed)
+        subset = Subset(self.test_dataset, indices.tolist())
+        return DataLoader(
+            subset,
+            batch_size=self.batch_size_sup,
+            shuffle=False,
+            num_workers=self.num_workers,
+            pin_memory=True,
+        )
+
     def cifar10c_loader(self, corruption: str, severity: int) -> DataLoader:
         """
         Load a specific corruption and severity from CIFAR-10-C.
@@ -159,6 +172,40 @@ class CIFARDataModule:
         labels = labels[start:end]
 
         dataset = CIFAR10CDataset(images, labels, transform=self.eval_tf)
+        return DataLoader(
+            dataset,
+            batch_size=self.batch_size_sup,
+            shuffle=False,
+            num_workers=self.num_workers,
+            pin_memory=True,
+        )
+
+    def cifar10c_loader_subsample(
+        self,
+        corruption: str,
+        severity: int,
+        n_samples: int,
+        seed: int,
+    ) -> DataLoader:
+        """Stratified random subsample of one (corruption, severity) cell."""
+        if not 1 <= severity <= 5:
+            raise ValueError(f"severity must be in [1, 5], got {severity}.")
+
+        path = Path(self.data_root) / "CIFAR-10-C"
+        images = np.load(path / f"{corruption}.npy")
+        labels = np.load(path / "labels.npy").astype(np.int64)
+
+        start = (severity - 1) * 10000
+        end = severity * 10000
+        images = images[start:end]
+        labels = labels[start:end]
+
+        # Seed includes severity so each (corruption, severity) gets a
+        # distinct deterministic subsample.
+        cell_seed = seed + 1000 * severity + hash(corruption) % 1000
+        indices = _stratified_indices(labels, n_samples=n_samples, seed=cell_seed)
+
+        dataset = CIFAR10CDataset(images[indices], labels[indices], transform=self.eval_tf)
         return DataLoader(
             dataset,
             batch_size=self.batch_size_sup,
@@ -201,3 +248,37 @@ class CIFAR10CDataset(Dataset):
         img = Image.fromarray(self.images[idx])
         img = self.transform(img)
         return img, int(self.labels[idx])
+
+
+def _stratified_indices(labels: np.ndarray, n_samples: int, seed: int) -> np.ndarray:
+    """
+    Pick `n_samples` indices from `labels` with one quota per class.
+
+    Quota is `n_samples // num_classes`; the remainder is distributed
+    one-per-class across the first `n_samples % num_classes` classes so
+    the returned size equals `n_samples` exactly. Indices are sorted so
+    DataLoader iteration is deterministic.
+    """
+    if n_samples <= 0:
+        raise ValueError(f"n_samples must be > 0, got {n_samples}.")
+    if n_samples > len(labels):
+        raise ValueError(
+            f"n_samples={n_samples} exceeds available {len(labels)} samples."
+        )
+
+    classes = np.unique(labels)
+    rng = np.random.default_rng(seed)
+    base, remainder = divmod(n_samples, len(classes))
+
+    chosen: list[int] = []
+    for i, cls in enumerate(classes):
+        cls_idx = np.flatnonzero(labels == cls)
+        quota = base + (1 if i < remainder else 0)
+        if quota > len(cls_idx):
+            raise ValueError(
+                f"Class {cls} has only {len(cls_idx)} samples but quota is {quota}."
+            )
+        picked = rng.choice(cls_idx, size=quota, replace=False)
+        chosen.extend(picked.tolist())
+
+    return np.sort(np.asarray(chosen, dtype=np.int64))
