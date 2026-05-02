@@ -9,6 +9,11 @@ Responsibilities:
 
 from __future__ import annotations
 
+import hashlib
+import logging
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import numpy as np
@@ -18,6 +23,91 @@ from torch.utils.data import DataLoader, Dataset, Subset
 from torchvision.datasets import CIFAR10
 
 from src.data.transforms import TransformFactory
+
+_LOG = logging.getLogger(__name__)
+
+# torchvision pins the Toronto mirror, which intermittently returns 503.
+# We pre-stage the archive from a working mirror first; torchvision then
+# verifies the MD5 and skips its own download.
+_CIFAR10_ARCHIVE_NAME = "cifar-10-python.tar.gz"
+_CIFAR10_EXTRACTED_DIR = "cifar-10-batches-py"
+_CIFAR10_MD5 = "c58f30108f718f92721af3b95e74349a"
+# Mirrors are tried in order; first one that returns content matching the
+# expected MD5 wins. We rely on the Internet Archive Wayback Machine because
+# (a) PyTorch's ossci-datasets bucket only mirrors MNIST, not CIFAR, and
+# (b) HuggingFace hosts CIFAR-10 only as parquet, not the canonical tarball.
+# The `id_` modifier on Wayback URLs returns the original payload bytes
+# (no toolbar wrapping), and the bare-year form lets Wayback redirect to any
+# available snapshot for that year.
+_CIFAR10_MIRRORS: tuple[str, ...] = (
+    "https://web.archive.org/web/2024id_/https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz",
+    "https://web.archive.org/web/20241225200100id_/https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz",
+    "https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz",
+)
+
+
+def _md5_of_file(path: Path, chunk: int = 1 << 20) -> str:
+    h = hashlib.md5()
+    with path.open("rb") as fh:
+        for block in iter(lambda: fh.read(chunk), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def _ensure_cifar10_archive(data_root: str) -> None:
+    """Pre-stage the CIFAR-10 tarball from a working mirror.
+
+    No-op if the extracted dataset directory already exists, or if the archive
+    is already present with the expected MD5. On failure across all mirrors,
+    returns silently and lets torchvision attempt its own download (which may
+    still succeed if its mirror has recovered).
+    """
+    root = Path(data_root)
+    root.mkdir(parents=True, exist_ok=True)
+
+    if (root / _CIFAR10_EXTRACTED_DIR).is_dir():
+        return
+
+    archive = root / _CIFAR10_ARCHIVE_NAME
+    if archive.is_file() and _md5_of_file(archive) == _CIFAR10_MD5:
+        _LOG.info("CIFAR-10 archive already staged at %s", archive)
+        return
+
+    if archive.is_file():
+        archive.unlink()
+
+    for mirror in _CIFAR10_MIRRORS:
+        for attempt in (1, 2):
+            try:
+                _LOG.info("Downloading CIFAR-10 from %s (attempt %d)", mirror, attempt)
+                with urllib.request.urlopen(mirror, timeout=30) as resp, archive.open("wb") as out:
+                    while True:
+                        block = resp.read(1 << 20)
+                        if not block:
+                            break
+                        out.write(block)
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                _LOG.warning("Mirror %s failed (attempt %d): %s", mirror, attempt, exc)
+                if archive.exists():
+                    archive.unlink()
+                time.sleep(2 * attempt)
+                continue
+
+            digest = _md5_of_file(archive)
+            if digest == _CIFAR10_MD5:
+                _LOG.info("CIFAR-10 staged from %s (md5 verified)", mirror)
+                return
+            _LOG.warning(
+                "Mirror %s returned content with bad MD5 %s (expected %s); discarding",
+                mirror,
+                digest,
+                _CIFAR10_MD5,
+            )
+            archive.unlink()
+
+    _LOG.warning(
+        "All CIFAR-10 mirrors failed; falling through to torchvision's own downloader."
+    )
 
 
 class CIFARDataModule:
@@ -58,7 +148,9 @@ class CIFARDataModule:
         self.test_dataset = None
 
     def prepare_data(self):
-        # download if not already there
+        # Stage the archive from a reliable mirror first (no-op if already
+        # extracted/staged); torchvision then just verifies + extracts.
+        _ensure_cifar10_archive(self.data_root)
         CIFAR10(root=self.data_root, train=True, download=True)
         CIFAR10(root=self.data_root, train=False, download=True)
 
