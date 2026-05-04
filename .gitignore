@@ -1,6 +1,15 @@
 /data/
 checkpoints/
-logs/
+# Logs: ignore everything except the structured result CSVs (jury-verifiable evidence).
+# Excludes noisy/large files (experiment.log, TensorBoard events).
+logs/*
+!logs/*/
+logs/*/*
+!logs/*/cifar10c_results.csv
+!logs/*/cifar10c_per_class.csv
+!logs/*/metrics.csv
+# Smoke-test runs are pipeline sanity checks, not scientific results — keep out of git.
+logs/smoke-test/
 __pycache__/
 *.pyc
 *.pyo
