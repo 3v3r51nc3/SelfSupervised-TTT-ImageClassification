@@ -362,6 +362,46 @@ with `lr = 1e-3` (Sun 2020 default). `rotation_mode` is `"rand"` for
 random per-sample labels (default) or `"expand"` for the variant that
 quadruples the input with all four fixed rotation labels.
 
+#### Why SGD without momentum
+
+The adapter uses **plain SGD (`momentum = 0`)**, even though Sun 2020's
+training-time recipe uses momentum 0.9. The reason is structural to the
+snapshot/reset protocol described in the next section:
+
+1. **Momentum buffers would have to be snapshotted and reset, too.** The
+   pipeline's correctness contract is that adaptation on cell *(c, s)*
+   never bleeds into cell *(c', s')*. With momentum > 0 the optimizer
+   carries a running velocity buffer per parameter; if we forget to
+   restore it together with the weights, the first SGD step on the new
+   cell starts from the previous cell's velocity and adaptation leaks
+   silently. The current `_initial_optim_state = deepcopy(optimizer.state_dict())`
+   would handle this in principle, but for `momentum = 0` SGD the
+   `state_dict` is empty, which makes the reset provably bug-free
+   regardless of code paths.
+2. **Momentum is meaningless at `steps = 1`.** The default Stage C
+   recipe takes a single SGD step per cell (per-batch) or per image
+   (per-image). Momentum has no history to accumulate over a single
+   update — it reduces to vanilla SGD in expectation but adds
+   bookkeeping risk for zero gain.
+3. **It matches the Sun 2020 reference *test-time* code.** The training
+   recipe in the original paper uses SGD + momentum 0.9, but the
+   inference-time `test_adapt.py` in
+   [yueatsprograms/ttt_cifar_release](https://github.com/yueatsprograms/ttt_cifar_release/blob/master/test_calls/test_adapt.py)
+   instantiates a fresh optimizer per sample with no momentum tracking
+   between samples. Our adapter follows that test-time convention, not
+   the training-time one.
+4. **Per-image TTT regression is not caused by this.** The negative
+   per-image result reported in the README is best explained by the
+   LayerNorm vs BatchNorm difference (Sun 2020 used a BN ResNet; we use
+   an LN ViT-Tiny), not by the absence of momentum. Adding momentum
+   would not recover per-image performance, and would obscure the
+   actual mechanism.
+
+If the lr/steps ablation later shows benefit from `steps >= 5`, momentum
+0.9 with explicit snapshot of the SGD velocity buffer should be
+revisited — at that point the bookkeeping cost is justified by a real
+optimization gain.
+
 ### Snapshot / reset semantics
 
 Test-time adaptation must not bleed across (corruption, severity)
@@ -408,6 +448,124 @@ same SGD optimizer, same snapshot/reset protocol — so the only thing
 that varies between rows in the CSV is whether the SGD step adapted on
 one batch of distinct test inputs (per-batch) or on K copies of one
 test input (per-image).
+
+### BatchNorm vs LayerNorm — why this matters for per-image TTT
+
+This subsection is the single most important piece of mechanistic
+context for interpreting Stage C results, and especially the per-image
+regression reported in the README.
+
+#### What the two layers actually do
+
+Both BN and LN are *affine normalizers*: they subtract a mean, divide
+by a standard deviation, then apply a learned `γ x + β` rescale. The
+difference is **which axis the statistics are computed over**.
+
+For an activation tensor of shape `(N, C, H, W)` (batch, channels,
+spatial):
+
+| Layer | Mean/var computed over | Per-channel? | Depends on batch size? |
+|---|---|---|---|
+| **BatchNorm** | `(N, H, W)` axes — i.e. across the whole batch and all spatial positions, per channel | yes | **yes** — statistics are batch-dependent |
+| **LayerNorm** | `(C, H, W)` axes (or `(C,)` for ViT tokens) — i.e. across all features of one sample | no (or per-token) | **no** — statistics are sample-local |
+
+So BN computes one (μ, σ) pair per channel using the entire batch.
+LN computes one (μ, σ) pair per *sample* (or per token) using only
+that sample's features. **BN couples samples in a batch; LN does not.**
+
+#### Train mode vs eval mode
+
+The train/eval distinction is also asymmetric:
+
+- **BN at train time** uses the *current batch*'s statistics and
+  updates a running EMA of (μ, σ).
+- **BN at eval time** uses the frozen running EMA, ignoring the
+  current batch.
+- **LN** has no train/eval distinction — it always computes statistics
+  from the current sample.
+
+This is why BN is "leaky" with respect to test data: the moment you
+put a BN model in `train()` mode and forward a test batch, the BN
+layer recomputes (μ, σ) from that test batch and adapts the
+normalization to the new distribution **for free, with no gradient
+step**. LN gives no such free lunch.
+
+#### How this couples to TTT-Sun-2020
+
+Sun 2020 designed TTT against a **ResNet-26 with BatchNorm**. The
+adaptation procedure has two effects on a BN backbone, only one of
+which is the gradient update:
+
+1. **Gradient effect (explicit).** One SGD step on the rotation loss
+   nudges the encoder weights toward the test distribution.
+2. **BN re-normalization effect (implicit and free).** Because
+   `model.train()` is called before adapting, BN switches to using
+   the current batch's statistics. The forward pass that produces the
+   classification logits therefore *also* benefits from test-time
+   batch statistics, regardless of the gradient step. This is exactly
+   the mechanism that TENT (Wang 2021) exploits standalone, and that
+   TTT++ (Liu 2021) §4 dissects in detail.
+
+For per-batch TTT, both effects help: the SGD step is informed by a
+real batch of distinct test images, and BN re-normalization is
+well-conditioned because the batch statistics are estimated from many
+samples.
+
+For per-image TTT on a BN backbone, effect 2 still partially fires:
+even though the "batch" is K=128 copies of a single image with
+different rotations, BN still gets a non-degenerate per-channel
+statistic to normalize against (the rotation augmentation breaks
+spatial symmetry across the K copies), and that re-normalization can
+absorb a meaningful chunk of the corruption shift on its own.
+
+#### Why ViT-Tiny + LayerNorm changes the picture
+
+Our backbone is **ViT-Tiny with LayerNorm only — no BatchNorm
+anywhere**. That removes effect 2 entirely:
+
+- LN computes (μ, σ) from a single sample's tokens. It does not see
+  the rest of the batch, ever. There is no train/eval mode difference,
+  no running EMA, no batch-statistics term in the forward pass.
+- The K=128 rotated copies of one image therefore contribute
+  **nothing** to the forward-pass normalization beyond what one copy
+  would contribute. The implicit "free" adaptation that BN would have
+  given Sun 2020 is simply absent.
+
+So in our per-image setup, only effect 1 (the gradient step) is
+available — and that gradient is computed from a batch of K
+near-identical images, which has high redundancy and low effective
+sample size. The result is a noisy update with no compensating BN
+re-normalization to absorb the residual shift. This is exactly the
+regime the README's per-image numbers reflect: 16 wins / 46 losses /
+8 ties on the matched 1k subsample, mean Δ = −0.48 pp.
+
+For per-batch on ViT/LN, effect 1 is still well-conditioned because
+the batch contains diverse test inputs, so the gradient step is
+informative. This is consistent with the +0.39 pp mean per-batch
+gain we *do* observe.
+
+#### Summary table
+
+| Backbone | Mode | Gradient signal | Implicit re-normalization | Net effect |
+|---|---|---|---|---|
+| ResNet + BN (Sun 2020) | per-batch | strong | strong (BN over diverse batch) | large gain |
+| ResNet + BN (Sun 2020) | per-image | weak (K copies) | partial (BN over K rotated copies) | modest gain |
+| **ViT + LN (this project)** | **per-batch** | **strong** | **none (LN ignores batch)** | **+0.39 pp (small but real)** |
+| **ViT + LN (this project)** | **per-image** | **weak (K copies)** | **none (LN ignores batch)** | **−0.48 pp (regresses)** |
+
+The takeaway: per-image TTT and BatchNorm are coupled by design. Drop
+BN and per-image loses its main mechanism, while per-batch keeps the
+gradient channel. This is the structural reason the per-image result
+is negative on our backbone, and it is not something that lr or step
+tuning is expected to fix — it is a property of the normalization
+choice. The lr/steps ablation in `configs/ablation/` will test this
+prediction.
+
+For the relevant references, see:
+- BatchNorm — Ioffe & Szegedy 2015 ([arXiv:1502.03167](https://arxiv.org/abs/1502.03167))
+- LayerNorm — Ba, Kiros & Hinton 2016 ([arXiv:1607.06450](https://arxiv.org/abs/1607.06450))
+- TENT (BN-affine TTA, isolates effect 2) — Wang et al. 2021 ([arXiv:2006.10726](https://arxiv.org/abs/2006.10726))
+- TTT++ (when SSL TTT fails or thrives) — Liu et al. 2021 ([arXiv:2106.10802](https://arxiv.org/abs/2106.10802))
 
 ### Reference
 
