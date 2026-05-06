@@ -20,3 +20,27 @@ dist/
 build/
 .venv/
 ignore/
+
+# Reference paper PDFs — keep summaries (which include arXiv links), but do
+# not bloat the repo with the binaries themselves. Each summary in
+# docs/papers/summaries/ links to ../pdfs/<file>.pdf for local browsing;
+# users can populate that folder by re-downloading from the arXiv links.
+docs/papers/pdfs/
+
+# LaTeX / Beamer build artifacts (presentation source is tracked, the
+# rendered PDF is tracked, intermediates are not).
+*.aux
+*.log
+*.out
+*.toc
+*.nav
+*.snm
+*.vrb
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+*.xdv
+*.bbl
+*.blg
+*.lof
+*.lot
