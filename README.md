@@ -74,7 +74,10 @@ Build and evaluate a complete pipeline based on:
 ├── docs/
 │   ├── assignment/         # TER assignment PDFs
 │   ├── notes/              # Technical notes on methods used
-│   └── papers/             # Reference papers (SimCLR, TTT, ActMAD...)
+│   ├── papers/             # Reference papers
+│   │   ├── pdfs/           # PDF copies (SimCLR, TTT, ActMAD, ...)
+│   │   └── summaries/      # One-page markdown summary per paper
+│   └── presentation/       # Project status presentation (LaTeX/PDF)
 ├── notebooks/              # Colab-ready notebook(s) for running the project
 ├── main.py                 # Entry point and pipeline overview
 └── src/
@@ -108,6 +111,16 @@ The project notes used to explain the main design choices live in
 - **Config presets & notebook switch** — smoke vs default.
 - **References** — full citation list (papers + arXiv links) for every
   technique used.
+
+### Paper summaries
+
+Per-paper one-page summaries of every reference cited in `tech_notes.md`
+live in [`docs/papers/summaries/`](docs/papers/summaries/README.md). Each
+file gives the citation, the core idea, key results, and how the paper
+is used in this project. The full reading list (TTT methods, building
+blocks, optimization, regularization, normalization layers) is indexed
+in [`docs/papers/summaries/README.md`](docs/papers/summaries/README.md).
+PDFs of all referenced papers are stored in `docs/papers/pdfs/`.
 
 ## First Run
 Two configs are shipped:
