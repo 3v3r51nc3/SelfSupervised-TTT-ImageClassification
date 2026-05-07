@@ -70,7 +70,7 @@ Build and evaluate a complete pipeline based on:
 ## Repository Structure
 ```text
 .
-├── configs/                     # Fichiers YAML de configuration (inchangé)
+├── configs/                     # Experiment configuration templates
 │   ├── default.yaml
 │   ├── smoke.yaml
 │   └── ablation/
@@ -84,7 +84,7 @@ Build and evaluate a complete pipeline based on:
 │       ├── images/              # Images téléchargées (sous-dossiers ou flat)
 │       └── meta.csv             # (Optionnel) CSV listant chemins + labels
 │
-├── docs/                        # Notes, PDF, présentation (inchangé)
+├── docs/                        # Notes, PDF, présentation 
 │
 ├── logs/
 │   ├── simclr-vit-cifar10-ter/  # Logs de tes expériences CIFAR-10/CIFAR-10-C
@@ -95,7 +95,7 @@ Build and evaluate a complete pipeline based on:
 │       ├── ttt_per_batch.csv
 │       └── ttt_per_image.csv
 │
-├── main.py                      # Pipeline principal (inchangé)
+├── main.py                      # Pipeline principal
 │
 ├── scripts/
 │   └── stress_test_fathomnet.py # NOUVEAU : script d’évaluation domain shift réel
@@ -103,7 +103,7 @@ Build and evaluate a complete pipeline based on:
 └── src/
     ├── core/
     │   ├── config.py
-    │   └── pipeline.py          # Orchestration du pipeline (inchangé)
+    │   └── pipeline.py          # Orchestration du pipeline 
     │
     ├── data/
     │   ├── dataset.py
@@ -111,9 +111,9 @@ Build and evaluate a complete pipeline based on:
     │   └── fathomnet.py         # NOUVEAU : Dataset PyTorch pour FathomNet
     │
     ├── models/
-    │   ├── backbone.py          # ViT (inchangé)
-    │   ├── classifier.py        # TTTModel (inchangé)
-    │   └── simclr.py            # SimCLR (inchangé)
+    │   ├── backbone.py          # ViT 
+    │   ├── classifier.py        # TTTMode
+    │   └── simclr.py            # SimCLR 
     │
     ├── training/
     │   ├── base_trainer.py
@@ -122,8 +122,8 @@ Build and evaluate a complete pipeline based on:
     │   └── ttt_finetune_trainer.py
     │
     ├── ttt/
-    │   ├── rotation.py          # Rotation SSL (inchangé)
-    │   └── adapter.py           # TTT per-batch / per-image (inchangé)
+    │   ├── rotation.py          # Rotation SSL 
+    │   └── adapter.py           # TTT per-batch / per-image 
     │
     ├── evaluation/
     │   ├── evaluator.py
