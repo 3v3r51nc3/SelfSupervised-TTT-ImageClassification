@@ -70,24 +70,69 @@ Build and evaluate a complete pipeline based on:
 ## Repository Structure
 ```text
 .
-├── configs/                # Experiment configuration templates
-├── docs/
-│   ├── assignment/         # TER assignment PDFs
-│   ├── notes/              # Technical notes on methods used
-│   ├── papers/             # Reference papers
-│   │   ├── pdfs/           # PDF copies (SimCLR, TTT, ActMAD, ...)
-│   │   └── summaries/      # One-page markdown summary per paper
-│   └── presentation/       # Project status presentation (LaTeX/PDF)
-├── notebooks/              # Colab-ready notebook(s) for running the project
-├── main.py                 # Entry point and pipeline overview
+├── configs/                     # Fichiers YAML de configuration (inchangé)
+│   ├── default.yaml
+│   ├── smoke.yaml
+│   └── ablation/
+│       ├── lr_1e-4.yaml
+│       ├── lr_1e-5.yaml
+│       ├── steps_5.yaml
+│       └── steps_10.yaml
+│
+├── data/
+│   └── fathomnet/               # Nouveau dossier pour les données FathomNet
+│       ├── images/              # Images téléchargées (sous-dossiers ou flat)
+│       └── meta.csv             # (Optionnel) CSV listant chemins + labels
+│
+├── docs/                        # Notes, PDF, présentation (inchangé)
+│
+├── logs/
+│   ├── simclr-vit-cifar10-ter/  # Logs de tes expériences CIFAR-10/CIFAR-10-C
+│   ├── ablation-lr-1e-4/
+│   ├── ablation-steps-5/
+│   └── fathomnet/               # Nouveau dossier pour les résultats FathomNet
+│       ├── baseline.csv
+│       ├── ttt_per_batch.csv
+│       └── ttt_per_image.csv
+│
+├── main.py                      # Pipeline principal (inchangé)
+│
+├── scripts/
+│   └── stress_test_fathomnet.py # NOUVEAU : script d’évaluation domain shift réel
+│
 └── src/
-    ├── core/               # Config + pipeline orchestration
-    ├── data/               # Datasets and transforms
-    ├── models/             # ViT backbone, SimCLR model, classifier
-    ├── training/           # Pretrain/probe/finetune trainers
-    ├── ttt/                # Test-time adaptation components
-    ├── evaluation/         # Metrics and evaluation routines
-    └── utils/              # Logging and checkpoint helpers
+    ├── core/
+    │   ├── config.py
+    │   └── pipeline.py          # Orchestration du pipeline (inchangé)
+    │
+    ├── data/
+    │   ├── dataset.py
+    │   ├── transforms.py
+    │   └── fathomnet.py         # NOUVEAU : Dataset PyTorch pour FathomNet
+    │
+    ├── models/
+    │   ├── backbone.py          # ViT (inchangé)
+    │   ├── classifier.py        # TTTModel (inchangé)
+    │   └── simclr.py            # SimCLR (inchangé)
+    │
+    ├── training/
+    │   ├── base_trainer.py
+    │   ├── linear_probe_trainer.py
+    │   ├── simclr_trainer.py
+    │   └── ttt_finetune_trainer.py
+    │
+    ├── ttt/
+    │   ├── rotation.py          # Rotation SSL (inchangé)
+    │   └── adapter.py           # TTT per-batch / per-image (inchangé)
+    │
+    ├── evaluation/
+    │   ├── evaluator.py
+    │   └── metrics.py           # Tu peux réutiliser pour logger
+    │
+    └── utils/
+        ├── checkpoint.py
+        ├── logger.py
+        └── seed.py
 ```
 
 ## Technical Notes
