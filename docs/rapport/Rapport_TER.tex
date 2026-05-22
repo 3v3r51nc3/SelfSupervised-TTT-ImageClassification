@@ -1,0 +1,450 @@
+\documentclass[10pt,conference]{IEEEtran}
+
+% =========================================================
+% PACKAGES
+% =========================================================
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{times}
+\usepackage[french]{babel}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{bm}
+
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{array}
+
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+
+\usepackage{tikz}
+\usetikzlibrary{positioning}
+
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+\hypersetup{
+	colorlinks=true,
+	linkcolor=blue,
+	citecolor=blue,
+	urlcolor=blue
+}
+
+% =========================================================
+% TITLE
+% =========================================================
+\title{
+	Test-Time Training auto-supervisé pour la classification des images
+}
+
+\author{
+	\IEEEauthorblockN{Maksym Dolhov \& Fallou Diouf}
+	\IEEEauthorblockA{Encadrants: Pr Ayoub Karine (ayoub.karine@u-paris.fr)\\ Pr Camille Kurtz (camille.kurtz@u-paris.fr)\\ Pr Laurent Wendling (Laurent.Wendling@u-paris.fr)}
+	\IEEEauthorblockA{
+		Master 1 Vision et Machine Intelligente\\
+		Université Paris Cité\\
+		Paris, France\\
+	}
+}
+
+% =========================================================
+% DOCUMENT
+% =========================================================
+\begin{document}
+	
+	\maketitle
+	
+	% =========================================================
+	% ABSTRACT
+	% =========================================================
+	\begin{abstract}
+		
+		Le décalage de distribution entre les données d'entraînement et les données de test constitue un problème majeur en vision par ordinateur. Les approches de \emph{Test-Time Training} (TTT) visent à adapter un modèle directement au moment de l'inférence à l'aide d'objectifs auto-supervisés, sans accès aux annotations des données de test.
+		
+		Dans ce travail, nous étudions l'intégration du TTT dans un pipeline de classification d'images fondé sur l'apprentissage auto-supervisé. Nous proposons un pipeline complet combinant un pré-entraînement SimCLR avec un encodeur ViT-Tiny, un fine-tuning supervisé sur CIFAR-10, puis une phase d'adaptation au test sur CIFAR-10-C à l'aide d'une tâche auxiliaire de prédiction de rotation.
+		
+		Nos expériences montrent que le TTT en mode \emph{per-batch} améliore systématiquement les performances sous dérive de distribution, avec des gains croissants lorsque la sévérité des corruptions augmente. À l'inverse, le TTT \emph{per-image} dégrade les performances dans notre configuration basée sur ViT et LayerNorm. Les ablations montrent que des adaptations plus agressives amplifient simultanément les gains du mode batch et les dégradations du mode image.
+		
+		Ces résultats suggèrent que l'efficacité du TTT dépend fortement du régime d'adaptation et de l'architecture de normalisation utilisée.
+		
+	\end{abstract}
+	
+	% =========================================================
+	% KEYWORDS
+	% =========================================================
+	\begin{IEEEkeywords}
+		Self-Supervised Learning, Test-Time Training, Vision Transformer,
+		Distribution Shift, Image Classification, Computer Vision
+	\end{IEEEkeywords}
+	
+	% =========================================================
+	\section{Introduction}
+	% =========================================================
+	
+	Les modèles modernes de vision par ordinateur reposent généralement sur de grandes quantités de données annotées afin d'obtenir des performances élevées. Cependant, l'annotation manuelle des données demeure coûteuse et difficilement scalable. L'apprentissage auto-supervisé (\emph{Self-Supervised Learning}, SSL) constitue une alternative prometteuse permettant d'apprendre des représentations générales à partir de données non annotées.
+	
+	Dans un pipeline classique, un modèle est d'abord pré-entraîné de manière auto-supervisée sur un grand ensemble d'images, puis spécialisé via un fine-tuning supervisé pour une tâche de classification. Toutefois, les distributions des données d'entraînement et de test peuvent différer significativement. Ce phénomène, appelé \emph{distribution shift}, entraîne souvent une dégradation importante des performances lors de l'inférence.
+	
+	Le \emph{Test-Time Training} (TTT) proposé par Sun et al.~\cite{sun2020ttt} vise à atténuer ce problème en adaptant le modèle directement pendant la phase de test à l'aide d'une tâche auto-supervisée auxiliaire. Contrairement aux approches classiques, le modèle continue donc à apprendre pendant l'inférence, sans accès aux labels des données de test.
+	
+	Dans ce travail, nous étudions l'application du TTT dans un cadre combinant :
+	\begin{itemize}
+		\item un pré-entraînement auto-supervisé SimCLR ;
+		\item un encodeur Vision Transformer (ViT-Tiny) ;
+		\item une évaluation robuste sur CIFAR-10-C ;
+		\item une adaptation au test basée sur une tâche de rotation.
+	\end{itemize}
+	
+	Nos contributions principales sont les suivantes :
+	
+	\begin{enumerate}
+		\item Nous proposons un pipeline complet SSL + TTT reproductible basé sur SimCLR et ViT-Tiny.
+		
+		\item Nous comparons deux régimes d'adaptation au test : \emph{per-batch} et \emph{per-image}.
+		
+		\item Nous montrons expérimentalement que le TTT per-batch améliore systématiquement les performances sous corruption, tandis que le TTT per-image dégrade fortement les performances dans notre configuration ViT/LayerNorm.
+		
+		\item Nous analysons l'effet des hyperparamètres d'adaptation et montrons qu'une adaptation plus agressive amplifie simultanément les gains du mode batch et les dégradations du mode image.
+	\end{enumerate}
+	
+	% =========================================================
+	\section{Travaux connexes}
+	% =========================================================
+	
+	\subsection{Apprentissage auto-supervisé}
+	
+	L'apprentissage auto-supervisé vise à apprendre des représentations sans annotations explicites en construisant automatiquement des tâches prétextes à partir des données. Parmi les approches récentes les plus influentes figurent SimCLR~\cite{chen2020simclr}, MoCo~\cite{he2020moco}, BYOL~\cite{grill2020byol} et DINO~\cite{caron2021dino}.
+	
+	SimCLR repose sur un apprentissage contrastif où deux vues augmentées d'une même image doivent produire des représentations proches dans l'espace latent.
+	
+	La perte NT-Xent utilisée par SimCLR est définie par :
+	
+	\[
+	\mathcal{L}_{i,j}=
+	-\log
+	\frac{
+		\exp(\mathrm{sim}(z_i,z_j)/\tau)
+	}{
+		\sum_{k=1}^{2N}
+		\mathbb{1}_{[k \neq i]}
+		\exp(\mathrm{sim}(z_i,z_k)/\tau)
+	}
+	\]
+	
+	où :
+	\begin{itemize}
+		\item $z_i$ et $z_j$ sont les projections de deux vues positives ;
+		\item $\mathrm{sim}(\cdot)$ désigne la similarité cosinus ;
+		\item $\tau$ représente le paramètre de température.
+	\end{itemize}
+	
+	% =========================================================
+	\subsection{Test-Time Training}
+	% =========================================================
+	
+	Le Test-Time Training (TTT) introduit une phase d'adaptation directement pendant l'inférence~\cite{sun2020ttt}. L'idée principale consiste à exploiter une tâche auto-supervisée auxiliaire disponible au test afin d'adapter le modèle à la distribution courante.
+	
+	Dans le travail original de Sun et al.~\cite{sun2020ttt}, une tâche de prédiction de rotation est utilisée comme objectif auxiliaire. Le modèle est optimisé sur cette tâche avant de produire la prédiction finale de classification.
+	
+	TTT++~\cite{liu2021tttpp} a ensuite étudié les conditions de succès et d'échec du TTT, mettant en évidence plusieurs problèmes de stabilité et de dérive du modèle.
+	
+	Des travaux récents ont également étudié l'interaction entre TTT et les modèles auto-supervisés modernes~\cite{han2025tttssl}, ainsi que des méthodes d'alignement de distributions telles que ActMAD~\cite{mirza2023actmad}.
+	
+	% =========================================================
+	\section{Méthodologie}
+	% =========================================================
+	
+	\subsection{Vue d'ensemble du pipeline}
+	
+	Notre pipeline est composé de trois étapes principales :
+	
+	\begin{enumerate}
+		\item Pré-entraînement auto-supervisé SimCLR ;
+		\item Fine-tuning supervisé sur CIFAR-10 ;
+		\item Adaptation Test-Time Training sur CIFAR-10-C.
+	\end{enumerate}
+	
+	La Figure~\ref{fig:pipeline} présente une vue d'ensemble du pipeline proposé.
+	
+	\begin{figure}[t]
+		\centering
+		%\includegraphics[width=\linewidth]{figures/pipeline.pdf}
+		\caption{Vue d'ensemble du pipeline SSL + TTT proposé.}
+		\label{fig:pipeline}
+	\end{figure}
+	
+	% =========================================================
+	\subsection{Pré-entraînement SimCLR}
+	% =========================================================
+	
+	Nous utilisons SimCLR comme méthode d'apprentissage auto-supervisé. L'encodeur principal est un ViT-Tiny avec :
+	\begin{itemize}
+		\item patch size : $4 \times 4$ ;
+		\item embedding dimension : 192 ;
+		\item drop path : 0.1.
+	\end{itemize}
+	
+	Deux vues augmentées sont générées pour chaque image à l'aide de transformations aléatoires :
+	\begin{itemize}
+		\item random crop ;
+		\item color jitter ;
+		\item grayscale ;
+		\item gaussian blur.
+	\end{itemize}
+	
+	Les représentations produites par l'encodeur sont projetées dans un espace latent de dimension 128 via une projection MLP.
+	
+	% =========================================================
+	\subsection{Fine-tuning supervisé}
+	% =========================================================
+	
+	Après le pré-entraînement SSL, le modèle est fine-tuné sur CIFAR-10.
+	
+	Deux têtes sont utilisées :
+	\begin{itemize}
+		\item une tête de classification à 10 classes ;
+		\item une tête auxiliaire de rotation à 4 classes.
+	\end{itemize}
+	
+	La perte totale est définie comme :
+	
+	\[
+	\mathcal{L}_{total}
+	=
+	\mathcal{L}_{cls}
+	+
+	\lambda_{rot}\mathcal{L}_{rot}
+	\]
+	
+	où :
+	\begin{itemize}
+		\item $\mathcal{L}_{cls}$ est une cross-entropy classique ;
+		\item $\mathcal{L}_{rot}$ correspond à la perte de rotation ;
+		\item $\lambda_{rot}$ contrôle l'importance de la tâche auxiliaire.
+	\end{itemize}
+	
+	% =========================================================
+	\subsection{Test-Time Training}
+	% =========================================================
+	
+	Pendant la phase de test, les labels ne sont pas disponibles. Cependant, la tâche auxiliaire de rotation reste exploitable.
+	
+	Pour chaque image de test :
+	\begin{enumerate}
+		\item plusieurs rotations sont générées ;
+		\item la perte rotation est calculée ;
+		\item les paramètres du modèle sont mis à jour ;
+		\item la prédiction de classification est produite.
+	\end{enumerate}
+	
+	La perte rotation utilisée est :
+	
+	\[
+	\mathcal{L}_{rot}
+	=
+	-\sum_{c=1}^{4}
+	y_c \log(\hat y_c)
+	\]
+	
+	Nous étudions deux régimes d'adaptation :
+	
+	\begin{itemize}
+		\item \textbf{Per-batch} : adaptation par batch complet ;
+		\item \textbf{Per-image} : adaptation indépendante pour chaque image.
+	\end{itemize}
+	
+	% =========================================================
+	\section{Expériences}
+	% =========================================================
+	
+	\subsection{Datasets}
+	
+	Nous utilisons :
+	\begin{itemize}
+		\item CIFAR-10 pour l'entraînement supervisé ;
+		\item CIFAR-10-C pour l'évaluation robuste.
+	\end{itemize}
+	
+	CIFAR-10-C contient plusieurs corruptions distribuées selon cinq niveaux de sévérité.
+	
+	% =========================================================
+	\subsection{Configuration expérimentale}
+	% =========================================================
+	
+	Toutes les expériences ont été exécutées sur un GPU NVIDIA L4.
+	
+	Le pré-entraînement SimCLR utilise :
+	\begin{itemize}
+		\item batch size : 1024 ;
+		\item 200 époques ;
+		\item AdamW ;
+		\item cosine scheduler ;
+		\item warmup sur 10 époques ;
+		\item AMP.
+	\end{itemize}
+	
+	% =========================================================
+	\section{Résultats}
+	% =========================================================
+	
+	\subsection{Résultats sur données propres}
+	
+	Le Tableau~\ref{tab:clean} présente les performances obtenues sur CIFAR-10 sans corruption.
+	
+	\begin{table}[h]
+		\centering
+		\caption{Accuracy Top-1 sur CIFAR-10 clean}
+		\label{tab:clean}
+		\begin{tabular}{lc}
+			\toprule
+			Configuration & Top-1 \\
+			\midrule
+			Baseline & 0.8959 \\
+			Per-batch TTT & 0.8960 \\
+			Per-image TTT & 0.8980 \\
+			\bottomrule
+		\end{tabular}
+	\end{table}
+	
+	Aucune dégradation n'est observée sur les données propres, ce qui valide la stabilité globale de la tête auxiliaire.
+	
+	% =========================================================
+	\subsection{Résultats sous distribution shift}
+	% =========================================================
+	
+	Le Tableau~\ref{tab:severity} présente les résultats moyens par niveau de sévérité.
+	
+	\begin{table}[h]
+		\centering
+		\caption{Accuracy moyenne sur CIFAR-10-C}
+		\label{tab:severity}
+		\begin{tabular}{cccc}
+			\toprule
+			Sévérité & Baseline & Per-batch & Per-image \\
+			\midrule
+			1 & 0.8673 & 0.8679 & 0.8666 \\
+			2 & 0.8392 & 0.8409 & 0.8395 \\
+			3 & 0.8033 & 0.8059 & 0.8033 \\
+			4 & 0.7516 & 0.7575 & 0.7534 \\
+			5 & 0.6803 & 0.6890 & 0.6830 \\
+			\bottomrule
+		\end{tabular}
+	\end{table}
+	
+	Les gains du mode per-batch augmentent avec la sévérité des corruptions.
+	
+	% =========================================================
+	\subsection{Effet des hyperparamètres}
+	% =========================================================
+	
+	Les ablations montrent que :
+	\begin{itemize}
+		\item augmenter le nombre de steps améliore fortement le mode per-batch ;
+		\item le mode per-image devient simultanément plus instable ;
+		\item des learning rates trop faibles rendent l'adaptation inefficace.
+	\end{itemize}
+	
+	% =========================================================
+	\section{Discussion}
+	% =========================================================
+	
+	Nos résultats montrent que le comportement du TTT dépend fortement du régime d'adaptation utilisé.
+	
+	Le mode per-batch améliore systématiquement les performances sous corruption, avec jusqu'à 67 cellules améliorées sur 70 dans la configuration la plus agressive.
+	
+	À l'inverse, le mode per-image dégrade fortement les performances dans notre configuration basée sur ViT et LayerNorm.
+	
+	Une hypothèse plausible est que les architectures basées sur LayerNorm ne bénéficient pas de la régularisation implicite des statistiques de batch présentes dans les architectures BatchNorm utilisées dans les travaux originaux de TTT.
+	
+	Nous observons également que les gains du TTT se concentrent principalement sur les corruptions sévères telles que :
+	\begin{itemize}
+		\item fog ;
+		\item gaussian noise ;
+		\item impulse noise ;
+		\item pixelate.
+	\end{itemize}
+	
+	Ces corruptions préservent partiellement la structure géométrique globale de l'image, ce qui pourrait expliquer pourquoi la tâche auxiliaire de rotation reste informative.
+	
+	% =========================================================
+	\section{Limites}
+	% =========================================================
+	
+	Notre étude présente plusieurs limitations :
+	
+	\begin{itemize}
+		\item une seule seed expérimentale ;
+		\item absence de comparaison directe avec ResNet + BatchNorm ;
+		\item exploration partielle des hyperparamètres ;
+		\item coût computationnel élevé du mode per-image.
+	\end{itemize}
+	
+	% =========================================================
+	\section{Conclusion}
+	% =========================================================
+	
+	Dans ce travail, nous avons étudié l'intégration du Test-Time Training dans un pipeline auto-supervisé basé sur SimCLR et ViT-Tiny.
+	
+	Nos résultats montrent que le TTT per-batch améliore de manière robuste les performances sous décalage de distribution, tandis que le TTT per-image dégrade les performances dans notre configuration ViT/LayerNorm.
+	
+	Ces observations suggèrent que l'efficacité du TTT dépend fortement de l'architecture de normalisation ainsi que du régime d'adaptation utilisé.
+	
+	Des travaux futurs incluront :
+	\begin{itemize}
+		\item des comparaisons avec ResNet + BatchNorm ;
+		\item des évaluations multi-seeds ;
+		\item l'étude de méthodes récentes telles que Tent et ActMAD.
+	\end{itemize}
+	
+	% =========================================================
+	\bibliographystyle{IEEEtran}
+	
+	\begin{thebibliography}{99}
+		
+		\bibitem{sun2020ttt}
+		Y. Sun et al.,
+		``Test-Time Training with Self-Supervision for Generalization under Distribution Shifts,''
+		ICML, 2020.
+		
+		\bibitem{liu2021tttpp}
+		Y. Liu et al.,
+		``TTT++: When Does Self-Supervised Test-Time Training Fail or Thrive?''
+		NeurIPS, 2021.
+		
+		\bibitem{chen2020simclr}
+		T. Chen et al.,
+		``A Simple Framework for Contrastive Learning of Visual Representations,''
+		ICML, 2020.
+		
+		\bibitem{he2020moco}
+		K. He et al.,
+		``Momentum Contrast for Unsupervised Visual Representation Learning,''
+		CVPR, 2020.
+		
+		\bibitem{grill2020byol}
+		J.-B. Grill et al.,
+		``Bootstrap Your Own Latent,''
+		NeurIPS, 2020.
+		
+		\bibitem{caron2021dino}
+		M. Caron et al.,
+		``Emerging Properties in Self-Supervised Vision Transformers,''
+		ICCV, 2021.
+		
+		\bibitem{han2025tttssl}
+		J. Han et al.,
+		``When Test-Time Adaptation Meets Self-Supervised Models,''
+		arXiv preprint, 2025.
+		
+		\bibitem{mirza2023actmad}
+		M. J. Mirza et al.,
+		``ActMAD: Activation Matching to Align Distributions for Test-Time-Training,''
+		CVPR, 2023.
+		
+	\end{thebibliography}
+	
+\end{document}
