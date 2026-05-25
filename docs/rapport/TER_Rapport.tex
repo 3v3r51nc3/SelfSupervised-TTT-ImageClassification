@@ -188,7 +188,7 @@
 		\textit{Comment adapter dynamiquement un modèle pendant l’inférence afin d’améliorer sa robustesse, sans utiliser les labels des données de test ?}
 	\end{quote}
 	
-	Le \emph{Test-Time Training} (TTT), introduit par Sun et al.~\cite{sun2020ttt}, propose une réponse à cette problématique en permettant au modèle de continuer à apprendre pendant l’inférence grâce à une tâche auto-supervisée auxiliaire.
+	Le \emph{Test-Time Training} (TTT), introduit par Sun et al.~\cite{Sun2020}, propose une réponse à cette problématique en permettant au modèle de continuer à apprendre pendant l’inférence grâce à une tâche auto-supervisée auxiliaire.
 	
 	\section{Objectifs du TER}
 	L’objectif principal de ce TER est d’étudier l’application du Test-Time Training dans un cadre auto-supervisé pour la classification d’images. Plus précisément, nous cherchons à :
@@ -475,7 +475,55 @@
 	
 	\subsection{Augmentations de données}
 	
+	Les augmentations jouent un rôle central dans SimCLR : elles définissent les paires positives et structurent l’espace latent appris par le modèle.  
+	Nous utilisons les transformations proposées dans l’article original, adaptées au format $32\times32$ de CIFAR-10.
+	
+	Les deux vues $x_i$ et $x_j$ d’une même image sont générées indépendamment à l’aide de la composition suivante :
+	\begin{itemize}
+		\item \textbf{RandomResizedCrop} (échelle $[0.2, 1.0]$) — variation de cadrage pour encourager l’invariance spatiale ;
+		\item \textbf{RandomHorizontalFlip} (p=0.5) — invariance miroir ;
+		\item \textbf{ColorJitter} (p=0.8) — perturbations de luminosité, contraste, saturation et teinte ;
+		\item \textbf{RandomGrayscale} (p=0.2) — suppression partielle de l’information couleur ;
+		\item \textbf{GaussianBlur} (p=0.5) — flou isotrope simulant des corruptions réalistes ;
+		\item \textbf{Normalisation} avec les statistiques CIFAR-10.
+	\end{itemize}
+	
+	Ces transformations sont appliquées sur des batches de taille \textbf{1024} (paramètre \texttt{batch\_size\_ssl}), ce qui permet de disposer d’un grand nombre de négatifs dans la perte contrastive.
+	
+	
 	\subsection{Perte NT-Xent}
+	
+	La perte contrastive utilisée est la \textbf{Normalized Temperature-Scaled Cross-Entropy Loss} (NT-Xent), introduite dans SimCLR.  
+	Elle encourage les représentations de deux vues positives $(z_i, z_j)$ d’une même image à être proches, tout en repoussant les représentations des autres images du batch.
+	
+	Pour une paire positive $(i,j)$, la perte est définie par :
+	
+	
+	\[
+	\ell(i,j) = - \log 
+	\frac{\exp(\mathrm{sim}(z_i, z_j)/\tau)}
+	{\sum_{k=1}^{2N} \mathbb{1}_{[k \neq i]} \exp(\mathrm{sim}(z_i, z_k)/\tau)},
+	\]
+	
+	
+	où :
+	\begin{itemize}
+		\item $\mathrm{sim}(\cdot,\cdot)$ est la similarité cosinus ;
+		\item $\tau = 0.2$ est la \textbf{température}, contrôlant la concentration de la distribution softmax ;
+		\item $N$ est la taille du batch (ici $N=1024$).
+	\end{itemize}
+	
+	La perte totale est la somme symétrisée :
+	
+	
+	\[
+	\mathcal{L}_{\text{NT-Xent}} = \frac{1}{2N} \sum_{i=1}^{N} \left[ \ell(i,j) + \ell(j,i) \right].
+	\]
+	
+	
+	
+	Cette formulation permet d’exploiter efficacement les nombreux négatifs présents dans un batch large, ce qui est essentiel pour stabiliser l’apprentissage contrastif sur un ViT-Tiny.
+	
 	
 	% ---------------------------------------------------------
 	\section{Fine-tuning supervisé}
@@ -961,6 +1009,7 @@
 	% BIBLIOGRAPHIE
 	% ========================================================
 	\begin{thebibliography}{99}
+		\footnotesize
 		
 		\bibitem{Sun2020}
 		Y.~Sun, X.~Wang, Z.~Liu, J.~Miller, A.~Efros, M.~Hardt,
@@ -987,6 +1036,22 @@
 		\emph{A Simple Framework for Contrastive Learning of Visual Representations (SimCLR)},
 		ICML, 2020. \href{https://arxiv.org/abs/2002.05709}{arXiv:2002.05709}.
 		
+		\bibitem{He2020}
+		K.~He, H.~Fan, Y.~Wu, S.~Xie, R.~Girshick,
+		\emph{Momentum Contrast for Unsupervised Visual Representation Learning} (MoCo),
+		CVPR, 2020. \href{https://arxiv.org/abs/1911.05722}{arXiv:1911.05722}.
+		
+		\bibitem{Grill2020}
+		J.-B.~Grill, F.~Strub, F.~Altch\'e, C.~Tallec, P.~Richemond, E.~Buchatskaya, C.~Doersch, B.~Avila~Pires, Z.~Guo, M.~Gheshlaghi~Azar, B.~Piot, K.~Kavukcuoglu, R.~Munos, M.~Valko,
+		\emph{Bootstrap Your Own Latent: A New Approach to Self-Supervised Learning} (BYOL),
+		NeurIPS, 2020. \href{https://arxiv.org/abs/2006.07733}{arXiv:2006.07733}.
+		
+		\bibitem{Caron2021}
+		M.~Caron, H.~Touvron, I.~Misra, H.~J\'egou, J.~Mairal, P.~Bojanowski, A.~Joulin,
+		\emph{Emerging Properties in Self-Supervised Vision Transformers} (DINO),
+		ICCV, 2021. \href{https://arxiv.org/abs/2104.14294}{arXiv:2104.14294}.
+		
+		
 		\bibitem{Dosovitskiy2021}
 		A.~Dosovitskiy \emph{et al.},
 		\emph{An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale (ViT)},
@@ -1006,6 +1071,11 @@
 		A.~Krizhevsky,
 		\emph{Learning Multiple Layers of Features from Tiny Images (CIFAR-10/100)},
 		Technical Report, University of Toronto, 2009.
+		
+		\bibitem{Wang2021}
+		D.~Wang, E.~Shelhamer, S.~Liu, B.~Zhang, H.~Zhu, T.~Darrell,
+		\emph{Tent: Fully Test-Time Adaptation by Entropy Minimization},
+		ICLR, 2021. \href{https://arxiv.org/abs/2006.10726}{arXiv:2006.10726}.
 		
 	\end{thebibliography}
 	
