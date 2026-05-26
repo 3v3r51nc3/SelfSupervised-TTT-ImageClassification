@@ -25,12 +25,6 @@
 \usepackage{multirow}
 
 % =========================================================
-% ALGORITHMES
-% =========================================================
-\usepackage{algorithm}
-\usepackage{algpseudocode}
-
-% =========================================================
 % TIKZ
 % =========================================================
 \usepackage{tikz}
@@ -85,7 +79,7 @@
 }
 
 \newcommand{\supervisor}{
-	Pr Ayoub Karine Pr Camille Kurtz Pr Laurent Wendling
+	Pr. Karine Ayoub, Pr. Camille Kurtz et Pr. Laurent Wendling
 }
 
 % =========================================================
@@ -103,7 +97,7 @@
 		% -----------------------------------------------------
 		% LOGO
 		% -----------------------------------------------------
-		\includegraphics[width=0.22\textwidth]{C:/Users/hp/Desktop/Latex/Paris_Cite.jpg}
+		\includegraphics[width=0.22\textwidth]{../presentation/assets/universite-paris-cite-logo.png}
 		
 		\vspace{1.5cm}
 		
@@ -134,9 +128,9 @@
 		% -----------------------------------------------------
 		\begin{flushleft}
 			\large
-			\textbf{Auteur :} \authorname \\[0.4cm]
+			\textbf{Auteurs :} \authorname \\[0.4cm]
 			
-			\textbf{Encadrant :} \supervisor \\[0.4cm]
+			\textbf{Encadrants :} \supervisor \\[0.4cm]
 			
 			\textbf{Année universitaire :} \schoolyear
 		\end{flushleft}
@@ -175,7 +169,7 @@
 	\chapter{Introduction}
 	
 	\section{Contexte}
-	Les modèles modernes de vision par ordinateur reposent généralement sur de grandes quantités de données annotées afin d'obtenir des performances élevées. Cependant, l’annotation manuelle demeure coûteuse, longue et difficilement scalable. L’apprentissage auto-supervisé (\emph{Self-Supervised Learning}, SSL) constitue une alternative prometteuse permettant d’apprendre des représentations visuelles générales à partir de données non annotées.
+	Les modèles modernes de vision par ordinateur reposent généralement sur de grandes quantités de données annotées afin d'obtenir des performances élevées. Cependant, l’annotation manuelle demeure coûteuse, longue et difficilement scalable. L’apprentissage auto-supervisé (\emph{Self-Supervised Learning}, SSL) constitue une alternative prometteuse pour apprendre des représentations visuelles générales à partir de données non annotées.
 	
 	Dans un pipeline classique, un modèle est d’abord pré-entraîné de manière auto-supervisée sur un large ensemble d’images, puis spécialisé via un fine-tuning supervisé pour une tâche de classification. Toutefois, les distributions des données d’entraînement et de test peuvent différer significativement. Ce phénomène, appelé \emph{distribution shift}, entraîne une dégradation notable des performances lors de l’inférence, en particulier sous bruit, flou, variations d’illumination ou transformations géométriques.
 	
@@ -215,7 +209,7 @@
 		Le reste du mémoire est organisé comme suit :
 	
 	\begin{itemize}
-		\item le Chapitre~2 présente l’état de l’art sur l’apprentissage auto-supervisé, le distribution shift et le Test-Time Training ;
+		\item le Chapitre~2 présente l’état de l’art sur l’apprentissage auto-supervisé, le \emph{distribution shift} et le Test-Time Training ;
 		\item le Chapitre~3 décrit la méthodologie proposée, incluant SimCLR, ViT-Tiny, le fine-tuning et l’adaptation TTT ;
 		\item le Chapitre~4 présente les expériences menées sur CIFAR-10 et CIFAR-10-C ;
 		\item le Chapitre~5 analyse les résultats, notamment la comparaison per-batch / per-image ;
@@ -241,14 +235,14 @@
 		\item \textbf{contrastives} : rapprocher deux vues d’une même image.
 	\end{itemize}
 	
-	Les méthodes contrastives ont dominé le domaine depuis 2020.
+	Les méthodes contrastives dominent le domaine depuis 2020.
 	
 	% ---------------------------------------------------------
 	\subsection{SimCLR}
 	
 	SimCLR~\cite{Chen2020} est une méthode contrastive simple et efficace.  
 	Deux vues augmentées d’une même image forment une paire positive, tandis que les vues d’images différentes forment des paires négatives.  
-	La perte NT-Xent maximise la similarité des positives et minimise celle des négatives.
+	La perte NT-Xent maximise la similarité des paires positives et minimise celle des paires négatives.
 	
 	Les ingrédients clés sont :
 	\begin{itemize}
@@ -302,7 +296,7 @@
 	\subsection{Self-Attention}
 	
 	Le mécanisme d’attention permet au modèle de capturer des relations globales entre les patchs.  
-	Contrairement aux CNN, ViT ne repose pas sur des convolutions locales.
+	Contrairement aux CNN, un ViT ne repose pas sur des convolutions locales.
 	
 	\subsection{LayerNorm}
 	
@@ -347,14 +341,14 @@
 	
 	Pendant l’entraînement :
 	\begin{itemize}
-		\item le modèle apprend la classification + la rotation ;
-		\item la tête rotation est conservée pour le test.
+		\item le modèle apprend la classification et la rotation ;
+		\item la tête de rotation est conservée pour le test.
 	\end{itemize}
 	
 	Au test :
 	\begin{itemize}
 		\item les labels ne sont pas disponibles ;
-		\item un pas de gradient est effectué sur la perte rotation ;
+		\item un pas de gradient est effectué sur la perte de rotation ;
 		\item la prédiction finale est produite après adaptation.
 	\end{itemize}
 	
@@ -414,11 +408,11 @@
 	\paragraph{Stage B.2 — Fine-tuning supervisé avec tête auxiliaire.}
 	L’encodeur est dégelé et deux têtes sont ajoutées :
 	\begin{itemize}
-		\item une tête de classification (10 classes) optimisée avec une cross-entropy et du label smoothing ;
+		\item une tête de classification (10 classes), optimisée avec une cross-entropy et du label smoothing ;
 		\item une tête auxiliaire de prédiction de rotation (4 classes : $0^\circ$, $90^\circ$, $180^\circ$, $270^\circ$).
 	\end{itemize}
 	Les deux pertes sont combinées pendant l’entraînement.  
-	La tête rotation est conservée pour l’adaptation TTT.
+	La tête de rotation est conservée pour l’adaptation TTT.
 	
 	\paragraph{Stage C — Évaluation CIFAR-10-C et Test-Time Training.}
 	Le modèle est évalué sur CIFAR-10-C (14 corruptions × 5 sévérités).  
@@ -458,11 +452,11 @@
 	L’architecture complète se compose de trois modules :
 	\begin{enumerate}
 		\item \textbf{Un encodeur ViT-Tiny} $f(\cdot)$ produisant une représentation globale du token \texttt{[CLS]}.
-		\item \textbf{Un projecteur MLP} $g(\cdot)$ à deux couches, qui mappe la représentation dans un espace latent de dimension 128.
+		\item \textbf{Un projecteur MLP} $g(\cdot)$ à deux couches, qui mappe les représentations dans un espace latent de dimension 128.
 		\item \textbf{La perte contrastive NT-Xent}, appliquée sur les paires positives $(z_i, z_j)$ issues des deux vues d’une même image.
 	\end{enumerate}
 	
-	Cette architecture permet d’apprendre des représentations invariantes aux transformations visuelles, qui serviront ensuite de base au fine-tuning supervisé et au Test-Time Training.
+	Cette architecture permet d’apprendre des représentations invariantes aux transformations visuelles, qui servent ensuite de base au fine-tuning supervisé et au Test-Time Training.
 	
 	\subsection{Vision Transformer ViT-Tiny}
 	Nous utilisons un \textbf{Vision Transformer ViT-Tiny} :
@@ -586,7 +580,7 @@
 	% ---------------------------------------------------------
 	\section{Test-Time Training}
 	
-	Le Test-Time Training (TTT) consiste à adapter le modèle au moment du test en exploitant une tâche auto-supervisée disponible même en absence de labels. 
+	Le Test-Time Training (TTT) consiste à adapter le modèle au moment du test en exploitant une tâche auto-supervisée disponible même en l’absence de labels. 
 	Dans notre cas, la tâche auxiliaire est la prédiction de rotation, introduite par Sun et al. (2020). 
 	Cette approche permet au modèle de s’ajuster dynamiquement aux corruptions présentes dans les données de test, améliorant ainsi sa robustesse.
 	
@@ -595,8 +589,8 @@
 		\item \textbf{method : ``sun2020''} — implémentation fidèle du TTT original ;
 		\item \textbf{steps : 1} — un pas de gradient par adaptation ;
 		\item \textbf{learning\_rate : $10^{-3}$} — taux d’apprentissage utilisé uniquement au test ;
-		\item \textbf{adapt\_scope : ``encoder\_plus\_head''} — adaptation conjointe de l’encodeur ViT et de la tête rotation ;
-		\item \textbf{lambda\_rot : 1.0} — poids de la perte rotation ;
+		\item \textbf{adapt\_scope : ``encoder\_plus\_head''} — adaptation conjointe de l’encodeur ViT et de la tête de rotation ;
+		\item \textbf{lambda\_rot : 1.0} — poids de la perte de rotation ;
 		\item \textbf{rotation\_mode : ``rand''} — rotation aléatoire parmi les quatre angles ;
 		\item \textbf{eval\_mode : ``both''} — exécution des deux régimes : per-batch et per-image ;
 		\item \textbf{per\_image\_aug\_k : 128} — nombre de copies tournées par image ;
@@ -606,12 +600,12 @@
 	\subsection{Principe du TTT}
 	
 	Pendant l’inférence, les labels de classification ne sont pas disponibles.  
-	Cependant, la tâche auxiliaire de rotation reste exploitable : pour chaque image de test, on peut générer une version tournée et calculer la perte rotation correspondante.
+	Cependant, la tâche auxiliaire de rotation reste exploitable : pour chaque image de test, on peut générer une version tournée et calculer la perte de rotation correspondante.
 	
 	Le TTT suit donc les étapes suivantes :
 	\begin{enumerate}
 		\item générer une ou plusieurs rotations de l’image de test ;
-		\item calculer la perte de rotation $\mathcal{L}_{rot}$ ;
+		\item calculer la perte de rotation $\mathcal{L}_{\text{rot}}$ ;
 		\item effectuer un ou plusieurs pas de gradient sur les paramètres du modèle ;
 		\item produire la prédiction finale via la tête de classification.
 	\end{enumerate}
@@ -629,7 +623,7 @@
 		\item il est compatible avec les propriétés statistiques des représentations ViT.
 	\end{itemize}
 	
-	Dans nos expériences, ce mode est celui qui fournit les meilleurs résultats, avec un gain moyen de +0.39~pp sur CIFAR-10-C.
+	Dans nos expériences, ce mode est celui qui fournit les meilleurs résultats, avec un gain moyen de +0.39\% sur CIFAR-10-C.
 	
 	\subsection{Adaptation per-image}
 	
@@ -650,7 +644,7 @@
 	Le paramètre \texttt{adapt\_scope} contrôle les parties du modèle mises à jour pendant l’adaptation.  
 	Nous utilisons :
 	\begin{itemize}
-		\item \textbf{encoder\_plus\_head} : adaptation conjointe du backbone ViT-Tiny et de la tête rotation.
+		\item \textbf{encoder\_plus\_head} : adaptation conjointe du backbone ViT-Tiny et de la tête de rotation.
 	\end{itemize}
 	
 	La tête de classification reste figée afin de préserver la fonction de décision.  
@@ -658,7 +652,7 @@
 	
 	Ce scope est crucial :  
 	\begin{itemize}
-		\item un scope trop large entraîne une sur-adaptation (observée en per-image) ;
+		\item un scope trop large entraîne une sur-adaptation, observée en per-image ;
 		\item un scope trop restreint limite l’efficacité du TTT.
 	\end{itemize}
 
@@ -782,8 +776,8 @@
 			\toprule
 			\textbf{Configuration} & \textbf{Top-1 Accuracy} \\
 			\midrule
-			Fine-tuning (val, meilleure époque) & \textbf{0.9008} \\
-			Baseline CIFAR-10 clean (sans TTT) & 0.8959 \\
+			Fine-tuning (val, meilleure époque) & \textbf{90.08\%} \\
+			Baseline CIFAR-10 clean (sans TTT) & 89.59\% \\
 			\bottomrule
 		\end{tabular}
 		\caption{Performances sur CIFAR-10 clean sans adaptation.}
@@ -796,13 +790,13 @@
 	Sur CIFAR-10-C, l’accuracy moyenne (toutes corruptions et sévérités confondues) est de :
 	
 	\[
-	\text{baseline} = \mathbf{0.7883}.
+	\text{baseline} = \mathbf{78.83\%}.
 	\]
 	
 	Comme attendu, la performance décroît avec la sévérité des corruptions.
 	
 	% ---------------------------------------------------------
-	\section{Résultat avec TTT}
+	\section{Résultats avec TTT}
 	Nous évaluons deux régimes d’adaptation au test :
 	\begin{itemize}
 		\item \textbf{TTT per-batch} : un pas de gradient par batch de test ;
@@ -819,13 +813,13 @@
 			\toprule
 			Sévérité & baseline & per-batch & per-image (1k) & $\Delta$ batch & $\Delta$ image \\
 			\midrule
-			1 & 0.8673 & 0.8679 & 0.8666 & +0.0007 & -0.0006 \\
-			2 & 0.8392 & 0.8409 & 0.8395 & +0.0017 & +0.0003 \\
-			3 & 0.8033 & 0.8059 & 0.8033 & +0.0025 & ~0.0000 \\
-			4 & 0.7516 & 0.7575 & 0.7534 & +0.0059 & +0.0018 \\
-			5 & 0.6803 & 0.6890 & 0.6830 & +0.0087 & +0.0027 \\
+			1 & 86.73\% & 86.79\% & 86.66\% & +0.07\% & -0.06\% \\
+			2 & 83.92\% & 84.09\% & 83.95\% & +0.17\% & +0.03\% \\
+			3 & 80.33\% & 80.59\% & 80.33\% & 0.00\% & 0.00\% \\
+			4 & 75.16\% & 75.75\% & 75.34\% & +0.59\% & +0.18\% \\
+			5 & 68.03\% & 68.90\% & 68.30\% & +0.87\% & +0.27\% \\
 			\midrule
-			\textbf{moyenne} & \textbf{0.7883} & \textbf{0.7922} & \textbf{0.7892} & \textbf{+0.0039} & \textbf{+0.0009} \\
+			\textbf{moyenne} & \textbf{78.83\%} & \textbf{79.22\%} & \textbf{78.92\%} & \textbf{+0.39\%} & \textbf{+0.09\%} \\
 			\bottomrule
 		\end{tabular}
 		\caption{Accuracy moyenne par sévérité sur CIFAR-10-C.}
@@ -833,7 +827,7 @@
 	\end{table}
 	
 	Le mode \textbf{per-batch} améliore systématiquement les performances, avec un gain croissant selon la sévérité.  
-	Le mode \textbf{per-image} est instable : il améliore légèrement aux sévérités faibles mais régresse sur le sous-ensemble apparié.
+	Le mode \textbf{per-image} est instable : il améliore légèrement les résultats aux sévérités faibles mais régresse sur le sous-ensemble apparié.
 	
 	\paragraph{Wins / losses.}
 	
@@ -851,11 +845,11 @@
 	\end{table}
 	
 	Le mode per-batch suit la signature de Sun~(2020).  
-	Le mode per-image dégrade dans 46 cellules sur 70.
+	Le mode per-image dégrade les performances dans 46 cellules sur 70.
 	
 	\paragraph{Top gains per-batch.}
 	
-	Les plus fortes améliorations concernent les corruptions lourdes (fog, pixelate, noise), avec des gains jusqu’à \textbf{+2.19 pp}.
+	Les plus fortes améliorations concernent les corruptions lourdes (fog, pixelate, noise), avec des gains jusqu’à \textbf{+2.19\%}.
 	
 	\subsection{Comparaison globale}
 	
@@ -867,10 +861,10 @@
 			\toprule
 			\textbf{Méthode} & \textbf{Accuracy moyenne CIFAR-10-C} \\
 			\midrule
-			Baseline & 0.7883 \\
-			SSL + Fine-tuning & 0.8959 (clean) \\
-			SSL + Fine-tuning + TTT per-batch & \textbf{0.7922} \\
-			SSL + Fine-tuning + TTT per-image & 0.7892 \\
+			Baseline & 78.83\% \\
+			SSL + Fine-tuning & 89.59\% (clean) \\
+			SSL + Fine-tuning + TTT per-batch & \textbf{79.22\%} \\
+			SSL + Fine-tuning + TTT per-image & 78.92\% \\
 			\bottomrule
 		\end{tabular}
 		\caption{Comparaison des performances globales.}
@@ -899,10 +893,10 @@
 	Le mode per-batch suit fidèlement la signature observée dans les travaux de Sun et al.~\cite{Sun2020}.  
 	Il présente plusieurs caractéristiques positives :
 	\begin{itemize}
-		\item un gain moyen de \textbf{+0.39 pp} sur l’ensemble des corruptions ;
+		\item un gain moyen de \textbf{+0.39\%} sur l’ensemble des corruptions ;
 		\item une amélioration dans \textbf{61 cellules sur 70}, avec seulement 6 régressions mineures ;
 		\item une absence totale de dégradation sur les données propres ;
-		\item un gain croissant avec la sévérité, atteignant \textbf{+0.87 pp} à sévérité 5.
+		\item un gain croissant avec la sévérité, atteignant \textbf{+0.87\%} à sévérité 5.
 	\end{itemize}
 	Ces résultats confirment que la tâche auxiliaire de rotation fournit un signal d’adaptation pertinent lorsque les corruptions sont suffisamment fortes.
 	
@@ -911,7 +905,7 @@
 	À l’inverse, le mode per-image se révèle instable dans notre configuration ViT/LayerNorm :
 	\begin{itemize}
 		\item il dégrade \textbf{46 cellules sur 70} sur le sous-ensemble apparié ;
-		\item son gain moyen est négatif (\textbf{-0.48 pp}) ;
+		\item son gain moyen est négatif (\textbf{-0.48\%}) ;
 		\item il est sensible au bruit d’optimisation, car chaque mise à jour repose sur un seul exemple.
 	\end{itemize}
 	
@@ -919,7 +913,7 @@
 	\begin{enumerate}
 		\item \textbf{ViT utilise LayerNorm} : contrairement aux modèles CNN avec BatchNorm, il ne bénéficie pas de la régularisation implicite des statistiques de batch.
 		\item \textbf{Le signal SSL est faible} : 128 copies tournées d’une seule image ne fournissent qu’un gradient peu informatif.
-		\item \textbf{Le scope d’adaptation est large} : adapter l’encodeur complet + la tête rotation peut provoquer une dérive rapide des représentations.
+		\item \textbf{Le scope d’adaptation est large} : adapter l’encodeur complet et la tête de rotation peut provoquer une dérive rapide des représentations.
 	\end{enumerate}
 	
 	% ---------------------------------------------------------
@@ -962,10 +956,10 @@
 	
 	Les résultats montrent que :
 	\begin{itemize}
-		\item le TTT \textbf{per-batch} améliore systématiquement la robustesse du modèle, avec un gain moyen de +0.39~pp et jusqu’à +0.87~pp aux sévérités les plus élevées ;
+		\item le TTT \textbf{per-batch} améliore systématiquement la robustesse du modèle, avec un gain moyen de +0.39\% et jusqu’à +0.87\% aux sévérités les plus élevées ;
 		\item cette amélioration est cohérente avec la signature observée dans les travaux de Sun et al. (2020) ;
 		\item le TTT \textbf{per-image} est instable dans notre configuration ViT/LN, dégradant les performances dans 46 cellules sur 70 ;
-		\item l’ablation \texttt{steps=5} confirme l’hypothèse de sur-adaptation : le per-batch s’améliore fortement (+1.50~pp), tandis que le per-image s’effondre (-1.68~pp) ;
+		\item l’ablation \texttt{steps=5} confirme l’hypothèse de sur-adaptation : le per-batch s’améliore fortement (+1.50\%), tandis que le per-image s’effondre (-1.68\%) ;
 		\item les gains se concentrent sur les corruptions lourdes (fog, noise, pixelate), où la tâche de rotation fournit un signal d’adaptation pertinent.
 	\end{itemize}
 	
