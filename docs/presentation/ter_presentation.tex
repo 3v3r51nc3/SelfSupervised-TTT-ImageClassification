@@ -7,6 +7,7 @@
 \usepackage{booktabs}
 \usepackage{array}
 \usepackage{xcolor}
+\usepackage{graphicx}
 \usepackage{tikz}
 \usetikzlibrary{positioning,arrows.meta,shapes.geometric}
 \usepackage{amsmath}
@@ -18,11 +19,53 @@
 \setbeamertemplate{caption}[numbered]
 \setbeamerfont{footnote}{size=\tiny}
 
-\definecolor{accent}{RGB}{30,90,160}
-\setbeamercolor{title}{fg=accent}
-\setbeamercolor{frametitle}{fg=accent}
-\setbeamercolor{structure}{fg=accent}
+\definecolor{parisciteBordeaux}{RGB}{154,20,70}
+\definecolor{parisciteDark}{RGB}{35,35,35}
+\definecolor{parisciteLight}{RGB}{247,245,246}
+\definecolor{accent}{RGB}{154,20,70}
+\newcommand{\pariscitelogo}{assets/universite-paris-cite-logo.png}
 
+\setbeamercolor{normal text}{fg=parisciteDark,bg=white}
+\setbeamercolor{title}{fg=parisciteBordeaux}
+\setbeamercolor{subtitle}{fg=parisciteDark}
+\setbeamercolor{author}{fg=parisciteDark}
+\setbeamercolor{institute}{fg=parisciteDark}
+\setbeamercolor{date}{fg=parisciteDark}
+\setbeamercolor{frametitle}{fg=parisciteBordeaux,bg=white}
+\setbeamercolor{structure}{fg=parisciteBordeaux}
+\setbeamercolor{block title}{fg=white,bg=parisciteBordeaux}
+\setbeamercolor{block body}{fg=parisciteDark,bg=parisciteLight}
+\setbeamercolor{alerted text}{fg=parisciteBordeaux}
+\setbeamercolor{author in head/foot}{fg=parisciteDark,bg=white}
+\setbeamercolor{title in head/foot}{fg=parisciteDark,bg=white}
+\setbeamercolor{date in head/foot}{fg=parisciteDark,bg=white}
+\setbeamertemplate{blocks}[rounded][shadow=false]
+\setbeamertemplate{itemize item}{\color{parisciteBordeaux}$\blacktriangleright$}
+\setbeamertemplate{itemize subitem}{\color{parisciteBordeaux}$\triangleright$}
+\setbeamertemplate{frametitle}{%
+  \nointerlineskip%
+  \begin{beamercolorbox}[wd=\textwidth,ht=0.76cm,dp=0.18cm,leftskip=0.1cm,rightskip=0.1cm]{frametitle}
+    \usebeamerfont{frametitle}\insertframetitle\hfill%
+    \raisebox{-0.08cm}{\includegraphics[height=0.46cm]{\pariscitelogo}}%
+  \end{beamercolorbox}%
+  {\color{parisciteBordeaux}\rule{\textwidth}{0.55pt}}%
+}
+\setbeamertemplate{footline}{%
+  \leavevmode%
+  \hbox{%
+    \begin{beamercolorbox}[wd=.72\paperwidth,ht=2.5ex,dp=1ex,leftskip=.35cm]{title in head/foot}%
+      \usebeamerfont{title in head/foot}\insertshorttitle%
+    \end{beamercolorbox}%
+    \begin{beamercolorbox}[wd=.18\paperwidth,ht=2.5ex,dp=1ex,center]{author in head/foot}%
+      \usebeamerfont{author in head/foot}Master 1 VMI%
+    \end{beamercolorbox}%
+    \begin{beamercolorbox}[wd=.10\paperwidth,ht=2.5ex,dp=1ex,rightskip=.35cm plus1fil]{date in head/foot}%
+      \usebeamerfont{date in head/foot}\insertframenumber/\inserttotalframenumber%
+    \end{beamercolorbox}%
+  }%
+  \vskip0pt%
+  {\color{parisciteBordeaux}\rule{\paperwidth}{0.4pt}}%
+}
 \newcommand{\good}[1]{\textcolor{green!50!black}{#1}}
 \newcommand{\bad}[1]{\textcolor{red!70!black}{#1}}
 \newcommand{\code}[1]{\texttt{\small #1}}
@@ -41,10 +84,11 @@
 \newcommand{\qbox}[1]{\textit{\textcolor{accent}{Q : #1}}\par\smallskip}
 
 \title[TTT auto-supervisé]{Test-Time Training auto-supervisé\\pour la classification d'images}
-\subtitle{TER M1 VMI --- état d'avancement}
+\subtitle{TER --- soutenance finale}
 \author[Dolhov \& Diouf]{Maksym \textsc{Dolhov} \and Fallou \textsc{Diouf}}
-\institute[U.~Paris]{Université Paris Cité --- M1 VMI}
-\date{Mai 2026}
+\institute[U.~Paris]{Université Paris Cité --- Master 1 Vision et Machine Intelligente}
+\date{28 mai 2026}
+\titlegraphic{\includegraphics[height=1.0cm]{\pariscitelogo}}
 
 \begin{document}
 
@@ -120,8 +164,8 @@
   \end{enumerate}
 
   \vspace{0.5em}
-  \begin{block}{Aujourd'hui}
-    Le pipeline tourne de bout en bout, un premier run overnight a été réalisé sur GPU L4 ; nous présentons les résultats préliminaires et discutons des prochaines étapes.
+  \begin{block}{Présentation finale}
+    Nous présentons le pipeline réalisé, les résultats expérimentaux obtenus sur CIFAR-10-C et les enseignements tirés de l'étude du Test-Time Training auto-supervisé.
   \end{block}
 \end{frame}
 
@@ -212,37 +256,19 @@
 \end{frame}
 
 \begin{frame}{Stage C --- Test-Time Training (Sun et al. 2020)}
-  \begin{columns}[T,onlytextwidth]
-    \begin{column}{0.55\textwidth}
-      \textbf{Idée}
-      \begin{itemize}\small
-        \item Au test, on n'a pas les labels, mais on peut toujours résoudre la tâche auto-supervisée (rotation).
-        \item Faire un pas de descente de gradient sur la perte rotation $\to$ adapter encodeur + tête rotation à la donnée de test.
-        \item Puis prédire avec la tête de classification.
-      \end{itemize}
+  \textbf{Idée}
+  \begin{itemize}
+    \item Au test, on n'a pas les labels, mais on peut toujours résoudre la tâche auto-supervisée (rotation).
+    \item Faire un pas de descente de gradient sur la perte rotation $\to$ adapter encodeur + tête rotation à la donnée de test.
+    \item Puis prédire avec la tête de classification, qui reste gelée.
+  \end{itemize}
 
-      \textbf{Deux régimes implémentés}
-      \begin{itemize}\small
-        \item \alert{per-batch} : un pas par batch de test ;
-        \item \alert{per-image} : un pas par image (128 copies tournées comme batch).
-      \end{itemize}
-    \end{column}
-    \begin{column}{0.42\textwidth}
-      \centering
-      \begin{tikzpicture}[font=\tiny, node distance=0.35cm]
-        \node[draw, rounded corners, fill=blue!10] (img) {image test};
-        \node[draw, rounded corners, below=of img, fill=accent!20, text=white] (enc) {encodeur $f$};
-        \node[draw, rounded corners, below left=of enc, fill=green!15] (cls) {tête cls};
-        \node[draw, rounded corners, below right=of enc, fill=orange!20] (rot) {tête rot};
-        \node[draw, rounded corners, below=of cls] (y) {$\hat y$};
-        \node[draw, rounded corners, below=of rot] (lr) {$\mathcal L_{rot}$};
-        \draw[->] (img)--(enc);
-        \draw[->] (enc)--(cls); \draw[->] (cls)--(y);
-        \draw[->] (enc)--(rot); \draw[->] (rot)--(lr);
-        \draw[<-, red, thick, dashed] (enc.east) to[out=0,in=0] node[right]{adapt} (lr.east);
-      \end{tikzpicture}
-    \end{column}
-  \end{columns}
+  \vspace{0.3em}
+  \textbf{Deux régimes implémentés}
+  \begin{itemize}
+    \item \alert{per-batch} : un pas par batch de test ;
+    \item \alert{per-image} : un pas par image (128 copies tournées comme batch).
+  \end{itemize}
 
   \vspace{0.3em}
   \begin{block}{Paramètres TTT}
@@ -250,34 +276,44 @@
   \end{block}
 \end{frame}
 
-\begin{frame}{Architecture du dépôt}
+\begin{frame}{Schéma d'adaptation au test}
   \centering
-  \small
-  \begin{tabular}{ll}
-    \toprule
-    Module & Rôle \\
-    \midrule
-    \code{src/core/}        & pipeline orchestration, config dataclass \\
-    \code{src/data/}        & datasets CIFAR-10 / CIFAR-10-C, 3 transforms \\
-    \code{src/models/}      & ViT-Tiny backbone, SimCLR, classifier+rot head \\
-    \code{src/training/}    & SimCLR / linear probe / fine-tune trainers \\
-    \code{src/ttt/}         & adapter Sun~2020 (rotation), \code{rotate\_batch} \\
-    \code{src/evaluation/}  & boucle CIFAR-10-C avec/sans TTT, métriques \\
-    \code{src/utils/}       & logger, checkpoints, seed \\
-    \code{configs/}         & \code{smoke.yaml}, \code{default.yaml} \\
-    \code{notebooks/}       & \code{colab.ipynb} (run de bout en bout) \\
-    \bottomrule
-  \end{tabular}
+  \begin{tikzpicture}[
+      font=\scriptsize,
+      node distance=0.52cm,
+      box/.style={draw, rounded corners, align=center, minimum height=0.72cm, inner xsep=5pt, inner ysep=4pt},
+      arr/.style={->, thick},
+      upd/.style={->, thick, dashed, red!75!black}
+    ]
+    \node[box, fill=blue!8, minimum width=2.2cm] (x) {batch test\\$x$};
+    \node[box, right=of x, fill=orange!15, minimum width=2.8cm] (rot) {copies tournées\\$0^\circ,90^\circ,180^\circ,270^\circ$};
+    \node[box, right=of rot, fill=accent!18, text=white, minimum width=2.9cm] (rotmodel) {encodeur $f_{\theta_e}$\\+ tête rot $h_{\theta_r}$};
+    \node[box, right=of rotmodel, fill=red!8, minimum width=2.3cm] (loss) {perte rotation\\$\mathcal L_{rot}$};
+    \node[box, below=0.52cm of loss, fill=yellow!20, minimum width=3.8cm] (update) {1 pas gradient\\$(\theta_e,\theta_r)\to(\theta'_e,\theta'_r)$};
 
-  \vspace{0.6em}
-  \begin{itemize}\footnotesize
-    \item Code modulaire, $\sim$2\,500 lignes Python, configurable par YAML.
-    \item Une seule entrée : \code{python main.py --config configs/default.yaml}.
-  \end{itemize}
+    \draw[arr] (x) -- (rot);
+    \draw[arr] (rot) -- (rotmodel);
+    \draw[arr] (rotmodel) -- (loss);
+    \draw[upd] (loss) -- (update);
+    \draw[upd] (update.west) to[out=180,in=-90] node[below, font=\tiny] {encodeur + tête rot adaptés} (rotmodel.south);
+
+    \node[box, below=2.15cm of x, fill=blue!8, minimum width=2.2cm] (xpred) {même image\\$x$};
+    \node[box, right=of xpred, fill=accent!18, text=white, minimum width=2.9cm] (enc) {encodeur adapté\\$f_{\theta'_e}$};
+    \node[box, right=of enc, fill=green!15, minimum width=2.9cm] (cls) {tête classification\\gelée};
+    \node[box, right=of cls, fill=green!8, minimum width=1.5cm] (y) {prédiction\\$\hat y$};
+
+    \draw[arr] (xpred) -- (enc);
+    \draw[arr] (enc) -- (cls);
+    \draw[arr] (cls) -- (y);
+
+    \node[above=0.08cm of rot, text=parisciteBordeaux, font=\bfseries\scriptsize] {Adaptation sans labels};
+    \node[above=0.08cm of enc, text=parisciteBordeaux, font=\bfseries\scriptsize] {Prédiction après adaptation};
+    \node[below=0.25cm of cls, text=red!70!black, font=\scriptsize] {Le label vrai n'est jamais utilisé pendant l'adaptation.};
+  \end{tikzpicture}
 \end{frame}
 
 % =====================================================================
-\section{Résultats préliminaires}
+\section{Résultats expérimentaux}
 
 \begin{frame}{Setup d'évaluation}
   \begin{itemize}
@@ -300,10 +336,10 @@
     \toprule
     \textbf{Configuration} & \textbf{Top-1} \\
     \midrule
-    Stage B.2 fine-tune (val, époque 30, best) & \textbf{0,9008} \\
-    Stage C clean --- baseline (sans TTT)      & 0,8959 \\
-    Stage C clean --- per-batch TTT            & 0,8960 \;($\Delta\!+\!0{,}0001$) \\
-    Stage C clean --- per-image TTT (sous-éch. 1k) & 0,8980 \\
+    Stage B.2 fine-tune (val, époque 30, best) & \textbf{90,08\,\%} \\
+    Stage C clean --- baseline (sans TTT)      & 89,59\,\% \\
+    Stage C clean --- per-batch TTT            & 89,60\,\% \;($\Delta\!+\!0{,}01\,\%$) \\
+    Stage C clean --- per-image TTT (sous-éch. 1k) & 89,80\,\% \\
     \bottomrule
   \end{tabular}
 
@@ -321,20 +357,20 @@
     \toprule
     Sévérité & baseline & per-batch & per-image (1k) & $\Delta$ batch & $\Delta$ image* \\
     \midrule
-    1 & 0,8673 & 0,8679 & 0,8666 & \good{+0,0007} & \bad{$-$0,0006} \\
-    2 & 0,8392 & 0,8409 & 0,8395 & \good{+0,0017} & +0,0003 \\
-    3 & 0,8033 & 0,8059 & 0,8033 & \good{+0,0025} & ~0,0000 \\
-    4 & 0,7516 & 0,7575 & 0,7534 & \good{+0,0059} & \good{+0,0018} \\
-    5 & 0,6803 & 0,6890 & 0,6830 & \good{+0,0087} & \good{+0,0027} \\
+    1 & 86,73\,\% & 86,79\,\% & 86,66\,\% & \good{+0,07\,\%} & \bad{$-$0,06\,\%} \\
+    2 & 83,92\,\% & 84,09\,\% & 83,95\,\% & \good{+0,17\,\%} & +0,03\,\% \\
+    3 & 80,33\,\% & 80,59\,\% & 80,33\,\% & \good{+0,25\,\%} & 0,00\,\% \\
+    4 & 75,16\,\% & 75,75\,\% & 75,34\,\% & \good{+0,59\,\%} & \good{+0,18\,\%} \\
+    5 & 68,03\,\% & 68,90\,\% & 68,30\,\% & \good{+0,87\,\%} & \good{+0,27\,\%} \\
     \midrule
-    \textbf{moyenne} & \textbf{0,7883} & \textbf{0,7922} & \textbf{0,7892} & \good{\textbf{+0,0039}} & \textbf{+0,0009} \\
+    \textbf{moyenne} & \textbf{78,83\,\%} & \textbf{79,22\,\%} & \textbf{78,92\,\%} & \good{\textbf{+0,39\,\%}} & \textbf{+0,09\,\%} \\
     \bottomrule
   \end{tabular}
 
   \vspace{0.6em}
   \begin{itemize}\footnotesize
-    \item Per-batch : gain qui croît avec la sévérité (+0,07~pp à sév.~1 $\to$ +0,87~pp à sév.~5).
-    \item *$\Delta$ image vs baseline 10k. Sur le sous-ensemble apparié 1k (apples-to-apples), per-image donne $\Delta$ moyen de \bad{$-0{,}0048$}.
+    \item Per-batch : gain qui croît avec la sévérité (+0,07\,\% à sév.~1 $\to$ +0,87\,\% à sév.~5).
+    \item *$\Delta$ image vs baseline 10k. Sur le sous-ensemble apparié 1k (apples-to-apples), per-image donne $\Delta$ moyen de \bad{$-0{,}48\,\%$}.
   \end{itemize}
 \end{frame}
 
@@ -362,12 +398,12 @@
     \toprule
     Corruption & sévérité & baseline & per-batch & $\Delta$ \\
     \midrule
-    fog            & 5 & 0,5367 & 0,5586 & \good{\textbf{+0,0219}} \\
-    pixelate       & 5 & 0,7378 & 0,7530 & \good{+0,0152} \\
-    impulse\_noise & 5 & 0,3959 & 0,4109 & \good{+0,0150} \\
-    pixelate       & 4 & 0,7634 & 0,7772 & \good{+0,0138} \\
-    impulse\_noise & 4 & 0,5547 & 0,5675 & \good{+0,0128} \\
-    gaussian\_noise & 4 & 0,5556 & 0,5679 & \good{+0,0123} \\
+    fog            & 5 & 53,67\,\% & 55,86\,\% & \good{\textbf{+2,19\,\%}} \\
+    pixelate       & 5 & 73,78\,\% & 75,30\,\% & \good{+1,52\,\%} \\
+    impulse\_noise & 5 & 39,59\,\% & 41,09\,\% & \good{+1,50\,\%} \\
+    pixelate       & 4 & 76,34\,\% & 77,72\,\% & \good{+1,38\,\%} \\
+    impulse\_noise & 4 & 55,47\,\% & 56,75\,\% & \good{+1,28\,\%} \\
+    gaussian\_noise & 4 & 55,56\,\% & 56,79\,\% & \good{+1,23\,\%} \\
     \bottomrule
   \end{tabular}
 
@@ -390,15 +426,15 @@
     Configuration & \multicolumn{2}{c|}{per-batch ($\Delta$ moyen)} & \multicolumn{2}{c}{per-image ($\Delta$ moyen, 1k matched)} \\
                   & toutes sév. & sév. 5 only & toutes sév. & sév. 5 only \\
     \midrule
-    \textbf{Default} (\code{steps=1, lr=1e-3}) & \good{+0,39~pp} & \good{+0,87~pp} & \bad{$-$0,48~pp} & \bad{$-$1,24~pp} \\
-    \textbf{steps=5} (\code{lr=1e-3})          & \good{\textbf{+1,50~pp}} & \good{\textbf{+3,21~pp}} & \bad{\textbf{$-$1,68~pp}} & \bad{\textbf{$-$3,97~pp}} \\
-    \textbf{lr=1e-4} (\code{steps=1})          & +0,04~pp        & +0,10~pp        & $-$0,05~pp       & $-$0,11~pp \\
+    \textbf{Default} (\code{steps=1, lr=1e-3}) & \good{+0,39\,\%} & \good{+0,87\,\%} & \bad{$-$0,48\,\%} & \bad{$-$1,24\,\%} \\
+    \textbf{steps=5} (\code{lr=1e-3})          & \good{\textbf{+1,50\,\%}} & \good{\textbf{+3,21\,\%}} & \bad{\textbf{$-$1,68\,\%}} & \bad{\textbf{$-$3,97\,\%}} \\
+    \textbf{lr=1e-4} (\code{steps=1})          & +0,04\,\%        & +0,10\,\%        & $-$0,05\,\%       & $-$0,11\,\% \\
     \bottomrule
   \end{tabular}
 
   \vspace{0.6em}
   \begin{itemize}\footnotesize
-    \item \alert{\code{steps=5} amplifie les deux effets en miroir} : per-batch passe à 67/70 wins (max +6,78~pp à fog s5) ; per-image chute à 9/57 wins (min $-9{,}20$~pp à impulse\_noise s5).
+    \item \alert{\code{steps=5} amplifie les deux effets en miroir} : per-batch passe à 67/70 wins (max +6,78\,\% à fog s5) ; per-image chute à 9/57 wins (min $-9{,}20\,\%$ à impulse\_noise s5).
     \item \code{lr=1e-4} étouffe le gradient d'adaptation $\Rightarrow$ TTT devient inopérant (signaux à $\sim 0$).
     \item Diagnostic : \emph{plus on adapte, plus le per-image se dégrade} $\Rightarrow$ confirme l'hypothèse de sur-adaptation sur ViT/LN.
   \end{itemize}
@@ -411,21 +447,21 @@
     \toprule
     Run & per-batch & per-image (1k) & wins/losses (per-batch) & wins/losses (per-image) \\
     \midrule
-    Default            & \good{+0,39~pp} & \bad{$-$0,48~pp} & 61 / 6 / 3   & 16 / 46 / 8 \\
-    steps=5            & \good{+1,50~pp} & \bad{$-$1,68~pp} & \good{67 / 2 / 1} & \bad{9 / 57 / 4} \\
-    lr=1e-4            & +0,04~pp        & $-$0,05~pp       & 45 / 12 / 13 & 10 / 25 / 35 \\
+    Default            & \good{+0,39\,\%} & \bad{$-$0,48\,\%} & 61 / 6 / 3   & 16 / 46 / 8 \\
+    steps=5            & \good{+1,50\,\%} & \bad{$-$1,68\,\%} & \good{67 / 2 / 1} & \bad{9 / 57 / 4} \\
+    lr=1e-4            & +0,04\,\%        & $-$0,05\,\%       & 45 / 12 / 13 & 10 / 25 / 35 \\
     \bottomrule
   \end{tabular}
   \par\vspace{0.2em}\scriptsize{\emph{Format : wins / losses / ties sur 70 cellules (sévérité $\geq 1$).}}
 
   \vspace{0.7em}
   \begin{block}{Lecture en une phrase}
-    Seul \alert{per-batch avec adaptation \emph{plus agressive} (\code{steps=5})} produit des gains francs et fiables (+1,5~pp moyen, +3,2~pp à sévérité~5, 67/70 cellules améliorées). \\ Per-image dégrade systématiquement, et l'effet s'aggrave quand on adapte plus.
+    Seul \alert{per-batch avec adaptation \emph{plus agressive} (\code{steps=5})} produit des gains francs et fiables (+1,5\,\% moyen, +3,2\,\% à sévérité~5, 67/70 cellules améliorées). \\ Per-image dégrade systématiquement, et l'effet s'aggrave quand on adapte plus.
   \end{block}
 \end{frame}
 
 % =====================================================================
-\section{Interprétation et prochaines étapes}
+\section{Interprétation et perspectives}
 
 \begin{frame}{Interprétation des résultats}
   \begin{enumerate}
@@ -443,7 +479,7 @@
       \item le scope \emph{encoder + head} peut être trop large pour un seul pas par image $\Rightarrow$ dérive de l'encodeur.
     \end{itemize}
 
-    \item \textbf{L'ablation \code{steps=5} confirme l'hypothèse de sur-adaptation} : per-batch s'améliore encore (+1,5~pp moyen, 67/70 wins), per-image s'effondre davantage ($-1{,}68$~pp moyen, jusqu'à $-9{,}2$~pp). Adapter \emph{plus} aide en mode batch et casse en mode image.
+    \item \textbf{L'ablation \code{steps=5} confirme l'hypothèse de sur-adaptation} : per-batch s'améliore encore (+1,5\,\% moyen, 67/70 wins), per-image s'effondre davantage ($-1{,}68\,\%$ moyen, jusqu'à $-9{,}2\,\%$). Adapter \emph{plus} aide en mode batch et casse en mode image.
 
     \item \textbf{Gains concentrés sur les corruptions lourdes} : c'est là que le pretexte de rotation a le plus à apporter.
   \end{enumerate}
@@ -459,7 +495,7 @@
   \end{itemize}
 \end{frame}
 
-\begin{frame}{Prochaines étapes envisagées}
+\begin{frame}{Perspectives}
   \begin{itemize}
     \item \textbf{Compléter les ablations} (déjà : steps=5, lr=1e-4) :
     \begin{itemize}\small
@@ -469,7 +505,7 @@
     \item \textbf{Variance} : 3 seeds sur le pipeline complet pour des barres d'erreur.
     \item \textbf{Comparatif} : ResNet18 BN + TTT comme référence (vérifier l'hypothèse LN vs BN).
     \item \textbf{Aller plus loin} (selon le temps) : ActMAD, Tent, comparaison avec TTT-MAE.
-    \item \textbf{Rédaction} du rapport final + figures consolidées (par corruption, courbes severité).
+    \item \textbf{Rapport final} : intégrer les figures consolidées (par corruption, courbes severité) et les limites expérimentales.
   \end{itemize}
 \end{frame}
 
@@ -479,7 +515,7 @@
 \begin{frame}{Conclusion}
   \begin{itemize}
     \item Pipeline complet \alert{opérationnel} : SimCLR (ViT-Tiny) $\to$ fine-tune avec tête rotation $\to$ évaluation CIFAR-10-C avec et sans TTT.
-    \item Premier run overnight reproduit la signature attendue de TTT en mode \textbf{per-batch} (+0,4~pp en moyenne, croissant avec la sévérité).
+    \item Premier run overnight reproduit la signature attendue de TTT en mode \textbf{per-batch} (+0,4\,\% en moyenne, croissant avec la sévérité).
     \item Mode \textbf{per-image} dégrade dans notre setup ViT/LN $\Rightarrow$ piste d'investigation principale.
     \item Code public et reproductible :
     \begin{center}\small
@@ -488,56 +524,16 @@
   \end{itemize}
 
   \vspace{0.6em}
-  \begin{block}{Objectifs du rendez-vous}
+  \begin{block}{Bilan de la soutenance}
     \begin{enumerate}\small
-      \item Vérifier que l'implémentation correspond aux attentes du sujet.
-      \item Discuter des prochaines ablations à prioriser.
-      \item Recueillir vos retours sur le mode per-image.
+      \item Présenter le travail réalisé de bout en bout pour le projet TER.
+      \item Défendre les choix méthodologiques : SimCLR, ViT-Tiny et adaptation TTT par rotation.
+      \item Résumer les résultats obtenus, leurs limites et les perspectives ouvertes.
     \end{enumerate}
   \end{block}
 \end{frame}
 
 % =====================================================================
-\begin{frame}{Questions pour vous --- 1/2 : alignement et ablations}
-  \textbf{1. Alignement avec le sujet du TER}
-  \begin{itemize}\small
-    \item ViT-Tiny (patch~$4{\times}4$, embed~192) --- taille adaptée, ou faut-il viser ViT-Small ?
-    \item Architecture en Y avec tête rotation entraînée \emph{conjointement} en Stage B.2 --- bien ce que vous attendiez, ou tête détachée préférable ?
-    \item Choix de Sun~2020 (rotation) plutôt que TTT++ (NT-Xent) au moment du test --- conforme au sujet, ou TTT++ attendu en plus ?
-    \item Scope d'adaptation \code{encoder + tête rotation} (classifieur gelé) --- bon choix, ou restreindre aux paramètres LN seulement ?
-    \item Évaluation per-image sur 1\,k images au lieu des 10\,k --- acceptable pour le rapport final ?
-  \end{itemize}
-
-  \vspace{0.4em}
-  \textbf{2. Ablations à prioriser}
-  \begin{itemize}\small
-    \item 3~seeds pour variance --- obligatoire, ou 1~seed acceptable au stade actuel ?
-    \item ResNet18+BN comme expérience-contrôle pour isoler l'effet LN --- indispensable, ou nice-to-have ?
-    \item Ablation \code{adapt\_scope} (head\_only / LN\_only / encoder+head) --- prioritaire ?
-    \item Ajout de \code{zoom\_blur} pour passer à 15/15 corruptions --- attendu pour le rapport ?
-    \item Comparaison à au moins une baseline non-Sun (Tent ou ActMAD) --- demandée ?
-  \end{itemize}
-\end{frame}
-
-\begin{frame}{Questions pour vous --- 2/2 : ressources et livrables}
-  \textbf{3. Ressources de calcul}
-  \begin{itemize}\small
-    \item Notre crédit Colab Pro est épuisé. Possibilités côté laboratoire ou université :
-    \begin{itemize}\footnotesize
-      \item GPU partagés du laboratoire LIPADE / accès SSH ?
-      \item Budget Google Cloud / AWS éducation ?
-    \end{itemize}
-    \item Estimation de notre besoin restant : $\sim$30--40~h L4 équivalent (3~seeds $\times$ 2~configs + ResNet contrôle + ablations \code{adapt\_scope}).
-  \end{itemize}
-
-  \vspace{0.4em}
-  \textbf{4. Livrables et organisation}
-  \begin{itemize}\small
-    \item Format et longueur attendus pour le rapport final ?
-    \item Date approximative de la soutenance ?
-  \end{itemize}
-\end{frame}
-
 \begin{frame}[allowframebreaks]{Références}
   \footnotesize
   \begin{thebibliography}{99}
@@ -597,7 +593,7 @@
     {\Huge\color{accent}\textbf{Merci de votre attention}}\\[1.5em]
     {\Large Questions ?}\\[2em]
     {\small Maksym \textsc{Dolhov} \quad\textbullet\quad Fallou \textsc{Diouf}}\\
-    {\footnotesize TER M1 VMI --- Université Paris Cité --- Mai 2026}
+    {\footnotesize TER --- Université Paris Cité --- Master 1 Vision et Machine Intelligente --- Mai 2026}
   \end{center}
 \end{frame}
 
@@ -615,6 +611,33 @@
     {\Huge\color{accent}\textbf{Annexes}}\\[1em]
     {\large Slides de réserve --- Q\&A préparé}
   \end{center}
+\end{frame}
+
+% --- Backup : architecture du dépôt ----------------------------------
+\begin{frame}{Annexe --- Architecture du dépôt}
+  \centering
+  \small
+  \begin{tabular}{ll}
+    \toprule
+    Module & Rôle \\
+    \midrule
+    \code{src/core/}        & pipeline orchestration, config dataclass \\
+    \code{src/data/}        & datasets CIFAR-10 / CIFAR-10-C, 3 transforms \\
+    \code{src/models/}      & ViT-Tiny backbone, SimCLR, classifier+rot head \\
+    \code{src/training/}    & SimCLR / linear probe / fine-tune trainers \\
+    \code{src/ttt/}         & adapter Sun~2020 (rotation), \code{rotate\_batch} \\
+    \code{src/evaluation/}  & boucle CIFAR-10-C avec/sans TTT, métriques \\
+    \code{src/utils/}       & logger, checkpoints, seed \\
+    \code{configs/}         & \code{smoke.yaml}, \code{default.yaml} \\
+    \code{notebooks/}       & \code{colab.ipynb} (run de bout en bout) \\
+    \bottomrule
+  \end{tabular}
+
+  \vspace{0.6em}
+  \begin{itemize}\footnotesize
+    \item Code modulaire, $\sim$2\,500 lignes Python, configurable par YAML.
+    \item Une seule entrée : \code{python main.py --config configs/default.yaml}.
+  \end{itemize}
 \end{frame}
 
 % --- A1 : 14/15 corruptions ------------------------------------------
@@ -636,18 +659,18 @@
 
 % --- A2 : Single seed -------------------------------------------------
 \begin{frame}{Annexe B --- Seed unique, comment quantifier le bruit ?}
-  \qbox{\guillemotleft\,Comment savez-vous que le +0,4~pp de per-batch n'est pas du bruit de seed ?\,\guillemotright{}}
+  \qbox{\guillemotleft\,Comment savez-vous que le +0,4\,\% de per-batch n'est pas du bruit de seed ?\,\guillemotright{}}
 
   \begin{itemize}
     \item \textbf{Honnêtement : nous ne le savons pas encore.} Le run présenté est sur une seule seed (42).
     \item Indices indirects qui suggèrent que ce n'est pas du bruit pur :
     \begin{itemize}\small
-      \item monotonie sur la sévérité ($+0{,}07 \to +0{,}87$~pp), peu probable par chance ;
+      \item monotonie sur la sévérité ($+0{,}07 \to +0{,}87$\,\%), peu probable par chance ;
       \item 61/70 cellules améliorées (binomial $p \!<\! 10^{-12}$ contre 50/50) ;
       \item zéro régression sur \code{clean} --- adaptation contrôlée.
     \end{itemize}
     \item Plan : 3 seeds (42, 1337, 2024) avec mêmes hyperparamètres pour barres d'erreur ; coût $\sim$6~h L4.
-    \item Pour la per-image dégradation ($\Delta = -0{,}48$~pp sur 1k), le signe est cohérent à travers toutes les sévérités $\geq$ 1 ; même argument de monotonie tient.
+    \item Pour la per-image dégradation ($\Delta = -0{,}48$\,\% sur 1k), le signe est cohérent à travers toutes les sévérités $\geq$ 1 ; même argument de monotonie tient.
   \end{itemize}
 \end{frame}
 
@@ -663,7 +686,7 @@
       \item coût gérable sur L4 vs ViT-S/B.
     \end{itemize}
     \item Conséquence reconnue : LayerNorm n'a pas de statistiques de batch à recalibrer $\Rightarrow$ TTT par batch \emph{ne peut pas} bénéficier du même mécanisme que le TTT-BN original.
-    \item Notre +0,4~pp est donc \alert{purement par adaptation des poids via la perte rotation}, pas via une renormalisation BN.
+    \item Notre +0,4\,\% est donc \alert{purement par adaptation des poids via la perte rotation}, pas via une renormalisation BN.
     \item \textbf{Ablation prévue} : refaire l'expérience avec ResNet-18 + BN dans le même pipeline pour isoler la contribution de la norme.
   \end{itemize}
 \end{frame}
@@ -714,7 +737,7 @@
 
 % --- A7 : Cost / latency of TTT ---------------------------------------
 \begin{frame}{Annexe G --- Coût computationnel de TTT}
-  \qbox{\guillemotleft\,Vous gagnez 0,4~pp avec per-batch et 4--8~pp à sévérité 5. Combien ça coûte en temps d'inférence ?\,\guillemotright{}}
+  \qbox{\guillemotleft\,Vous gagnez 0,4\,\% avec per-batch et 4--8\,\% à sévérité 5. Combien ça coûte en temps d'inférence ?\,\guillemotright{}}
 
   \centering
   \begin{tabular}{lcc}
@@ -722,8 +745,8 @@
     Mode & gain moyen & sur-coût d'inférence \\
     \midrule
     baseline           & --- & 1$\times$ (forward seul) \\
-    per-batch TTT      & +0,4~pp ($\sim$+0,9~pp à sév.~5) & $\sim$2$\times$ (1 fwd + 1 bwd) \\
-    per-image TTT      & $-0{,}5$~pp & $\sim$130$\times$ (128 copies + bwd) \\
+    per-batch TTT      & +0,4\,\% ($\sim$+0,9\,\% à sév.~5) & $\sim$2$\times$ (1 fwd + 1 bwd) \\
+    per-image TTT      & $-0{,}5$\,\% & $\sim$130$\times$ (128 copies + bwd) \\
     \bottomrule
   \end{tabular}
 
@@ -825,7 +848,7 @@
   \begin{itemize}\small
     \item $\lambda = 1$ vient de Sun~2020, mais sur \alert{ResNet + BN}. Sur \alert{ViT + LN}, l'équilibre peut être différent.
     \item Avec entraînement conjoint, la perte rotation \emph{tire} l'encodeur dans sa direction. Si $\lambda$ trop grand $\to$ classification souffre. Trop petit $\to$ tête rotation mal calibrée et signal TTT faible en Stage~C.
-    \item Notre gain per-batch modeste en default ($+0{,}39$~pp) pourrait s'expliquer en partie par un encodeur \emph{tiraillé} entre les deux objectifs.
+    \item Notre gain per-batch modeste en default ($+0{,}39$\,\%) pourrait s'expliquer en partie par un encodeur \emph{tiraillé} entre les deux objectifs.
   \end{itemize}
 
   \textbf{Alternative} : tête détachée --- entraîner d'abord le classifieur seul, puis figer l'encodeur et entraîner la tête rotation séparément. Conséquence : encodeur plus précis pour la classif, mais moins adapté à la tâche prétexte $\Rightarrow$ signal TTT en Stage C plus faible.
